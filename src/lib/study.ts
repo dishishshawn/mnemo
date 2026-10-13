@@ -453,9 +453,12 @@ export async function generatePodcast(
   const queue = chunks.map((_, i) => i);
   const worker = async () => {
     for (let i = queue.shift(); i !== undefined; i = queue.shift()) {
-      const text = chunks[i].map((l) => `${l.speaker === "A" ? HOSTS[0] : HOSTS[1]}: ${l.text}`).join("\n");
       const res = await synthesizeDialogue({
-        script: `Read this study podcast conversation between ${HOSTS[0]} and ${HOSTS[1]} aloud, warm and lively, at a natural pace:\n\n${text}`,
+        turns: chunks[i].map((l) =>
+          l.speaker === "A"
+            ? { speaker: HOSTS[0], text: l.text, style: "warm, clear and enthusiastic podcast host, natural pace" }
+            : { speaker: HOSTS[1], text: l.text, style: "curious, lively co-host, natural pace" },
+        ),
         speakers: HOSTS,
         voices: settings.podcastVoices,
         task: "podcast-audio",

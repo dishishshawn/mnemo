@@ -234,9 +234,19 @@ export interface SpeechResult {
   sampleRate: number;
 }
 
-/** Two-speaker text-to-speech. `script` uses "Name: line" per turn. */
+export interface SpokenTurn {
+  speaker: string;
+  text: string;
+  /** Delivery hint, e.g. "curious, upbeat". */
+  style?: string;
+}
+
+/**
+ * Two-speaker text-to-speech. Gemini 3.8 TTS requires every text part to name its speaker
+ * via speechMetadata (the older "Name: line" text convention is rejected with a 400).
+ */
 export async function synthesizeDialogue(opts: {
-  script: string;
+  turns: SpokenTurn[];
   speakers: [string, string];
   voices: [string, string];
   task: string;
@@ -244,12 +254,17 @@ export async function synthesizeDialogue(opts: {
   signal?: AbortSignal;
 }): Promise<SpeechResult> {
   const model = env.getSettings().ttsModel;
-  const callOpts: CallOptions = { role: "fast", task: opts.task, kitId: opts.kitId, contents: opts.script };
+  const callOpts: CallOptions = { role: "fast", task: opts.task, kitId: opts.kitId, contents: "" };
   const res = await withRetry(
     () =>
       ai().models.generateContent({
         model,
-        contents: [{ role: "user", parts: [{ text: opts.script }] }],
+        contents: [
+          {
+            role: "user",
+            parts: opts.turns.map((t) => ({ text: t.text, speechMetadata: { speaker: t.speaker, style: t.style } })),
+          },
+        ],
         config: {
           abortSignal: opts.signal,
           responseModalities: ["AUDIO"],

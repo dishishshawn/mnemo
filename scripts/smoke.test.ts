@@ -24,6 +24,7 @@ import {
   tutorReply,
 } from "../src/lib/study";
 import { ingestYouTube } from "../src/lib/ingest";
+import { synthesizeDialogue } from "../src/lib/gemini";
 
 const key = process.env.GEMINI_API_KEY ?? "";
 const settings: Settings = { ...DEFAULT_SETTINGS, apiKey: key, podcastMinutes: 3 };
@@ -55,6 +56,21 @@ async function material(): Promise<string> {
 }
 
 describe.skipIf(!key)("Gemini smoke test", () => {
+  it("speaks a two-host dialogue (TTS only)", { timeout: 120_000 }, async () => {
+    const res = await synthesizeDialogue({
+      turns: [
+        { speaker: "Alex", text: "Welcome back! Today we're talking about how cells make ATP.", style: "warm, enthusiastic" },
+        { speaker: "Sam", text: "Wait, so glucose doesn't just turn straight into energy?", style: "curious" },
+      ],
+      speakers: ["Alex", "Sam"],
+      voices: ["Puck", "Kore"],
+      task: "podcast-audio",
+    });
+    const seconds = res.pcm.length / 2 / res.sampleRate;
+    console.log(`  tts: ${seconds.toFixed(1)}s at ${res.sampleRate} Hz`);
+    expect(seconds).toBeGreaterThan(2);
+  });
+
   it("runs every feature end to end", { timeout: 15 * 60_000 }, async () => {
     const text = await material();
     console.log(`Material: ${text.length.toLocaleString()} chars (~${Math.round(text.length / 4).toLocaleString()} tokens)\n`);
