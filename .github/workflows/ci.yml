@@ -1,0 +1,24 @@
+name: CI
+
+# Vercel builds and deploys on every push (it's connected to this repo); this checks tests,
+# types and the production build so a broken commit is visible here too.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
