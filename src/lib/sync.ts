@@ -298,7 +298,8 @@ async function pull(keys: VaultKeys, st: SyncState): Promise<"merged" | "unchang
   if (!res.ok) throw new Error(`Couldn't reach sync (${res.status}).`);
   const snapshot = await open<Snapshot>(new Uint8Array(await res.arrayBuffer()), keys.key);
   await mergeSnapshot(snapshot);
-  st.etag = res.headers.get("ETag");
+  // X-Etag is the exact value; the CDN may have weakened ETag to W/"…".
+  st.etag = res.headers.get("X-Etag") ?? res.headers.get("ETag")?.replace(/^W\//, "") ?? null;
   return "merged";
 }
 

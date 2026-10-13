@@ -12,7 +12,15 @@ const VAULT = /^[0-9a-f]{64}$/;
 const NAME = /^(state|src-[0-9a-f-]{36})$/;
 // Vercel Functions accept request bodies up to 4.5 MB.
 const MAX_BYTES = 4 * 1024 * 1024;
-const NO_STORE = { "Cache-Control": "no-store" };
+// no-transform: the payload is already gzipped and encrypted, so CDN compression only wastes time.
+const NO_STORE = { "Cache-Control": "no-store, no-transform" };
+
+/**
+ * Vercel's CDN turns ETags weak (W/"…") on the way out, which would never match on the way back
+ * in. Send the exact value in X-Etag too, and accept either form from clients.
+ */
+const strong = (etag: string | null) => etag?.replace(/^W\//, "") || undefined;
+const tagHeaders = (etag: string) => ({ ETag: etag, "X-Etag": etag });
 
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: NO_STORE });
 
@@ -29,13 +37,13 @@ export default {
         const result = await get(pathname, {
           access: "private",
           useCache: false,
-          ifNoneMatch: request.headers.get("if-none-match") ?? undefined,
+          ifNoneMatch: strong(request.headers.get("if-none-match")),
         });
         // 204 rather than 404 for "nothing stored yet": it's an expected answer, not an error.
         if (!result) return new Response(null, { status: 204, headers: NO_STORE });
-        if (result.statusCode === 304) return new Response(null, { status: 304, headers: { ...NO_STORE, ETag: result.blob.etag } });
+        if (result.statusCode === 304) return new Response(null, { status: 304, headers: { ...NO_STORE, ...tagHeaders(result.blob.etag) } });
         return new Response(result.stream, {
-          headers: { ...NO_STORE, "Content-Type": "application/octet-stream", ETag: result.blob.etag },
+          headers: { ...NO_STORE, "Content-Type": "application/octet-stream", ...tagHeaders(result.blob.etag) },
         });
       }
 
@@ -43,7 +51,7 @@ export default {
         const body = new Uint8Array(await request.arrayBuffer());
         if (body.byteLength === 0) return json({ error: "Empty body." }, 400);
         if (body.byteLength > MAX_BYTES) return json({ error: "Too large." }, 413);
-        const ifMatch = request.headers.get("if-match") ?? undefined;
+        const ifMatch = strong(request.headers.get("if-match"));
         // Source texts never change, so overwriting one is harmless; state needs create-or-CAS.
         const isState = name === "state";
         try {

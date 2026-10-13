@@ -22,11 +22,13 @@ configureSync({
     const current = server.get(key);
     if ((init?.method ?? "GET") === "GET") {
       if (!current) return new Response(null, { status: 204 });
-      if (headers.get("If-None-Match") === current.etag) return new Response(null, { status: 304, headers: { ETag: current.etag } });
-      return new Response(current.bytes as BodyInit, { headers: { ETag: current.etag } });
+      // Like Vercel's CDN: ETag arrives weakened; X-Etag carries the exact value.
+      const tags = { ETag: `W/${current.etag}`, "X-Etag": current.etag };
+      if (headers.get("If-None-Match")?.replace(/^W\//, "") === current.etag) return new Response(null, { status: 304, headers: tags });
+      return new Response(current.bytes as BodyInit, { headers: tags });
     }
     const isState = key.endsWith("/state");
-    const ifMatch = headers.get("If-Match");
+    const ifMatch = headers.get("If-Match")?.replace(/^W\//, "");
     if (isState && failNextPutWith412) {
       failNextPutWith412 = false;
       return Response.json({}, { status: 412 });

@@ -98,11 +98,12 @@ async function handleSync(route) {
   const h = req.headers();
   if (req.method() === "GET") {
     if (!cur) return route.fulfill({ status: 204 });
-    if (h["if-none-match"] === cur.etag) return route.fulfill({ status: 304, headers: { ETag: cur.etag } });
-    return route.fulfill({ status: 200, body: cur.bytes, headers: { ETag: cur.etag, "Content-Type": "application/octet-stream" } });
+    const tags = { ETag: `W/${cur.etag}`, "X-Etag": cur.etag }; // like Vercel's CDN
+    if (h["if-none-match"]?.replace(/^W\//, "") === cur.etag) return route.fulfill({ status: 304, headers: tags });
+    return route.fulfill({ status: 200, body: cur.bytes, headers: { ...tags, "Content-Type": "application/octet-stream" } });
   }
   const isState = key.endsWith("/state");
-  const ifMatch = h["if-match"];
+  const ifMatch = h["if-match"]?.replace(/^W\//, "");
   if (isState && ((ifMatch && cur?.etag !== ifMatch) || (!ifMatch && cur))) return route.fulfill({ status: 412, json: {} });
   const etag = `"s${++syncSeq}"`;
   syncStore.set(key, { bytes: req.postDataBuffer(), etag });
