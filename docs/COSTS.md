@@ -1,7 +1,7 @@
 # What Mnemo costs to run
 
 Short answer: **$0 on a free Gemini key, or about $1.50–9 a month with billing enabled for one
-student studying every day** (roughly double that from January 2027, when Google's Flash prices go up). Hosting is free (GitHub Pages). For comparison, Thea+ is listed at
+student studying every day** (roughly double that from January 2027, when Google's Flash prices go up). Hosting is free (Vercel Hobby: the static app plus a tiny sync endpoint and Blob storage). For comparison, Thea+ is listed at
 $12/month or $48/year in the App Store.
 
 The app shows real spending under **Settings → API spending**, computed from the token counts

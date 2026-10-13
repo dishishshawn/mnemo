@@ -9,6 +9,7 @@ import { db } from "../lib/db";
 import { runJob } from "../lib/jobs";
 import { useSettings } from "../lib/settings";
 import { addSources, createKit, generateFlashcards, type NewSource } from "../lib/study";
+import type { PdfMode } from "../lib/ingest";
 
 export default function NewKit() {
   const navigate = useNavigate();
@@ -18,7 +19,7 @@ export default function NewKit() {
   const [title, setTitle] = useState("");
   const [language, setLanguage] = useState("auto");
   const [folderId, setFolderId] = useState("");
-  const [deepRead, setDeepRead] = useState(false);
+  const [pdfMode, setPdfMode] = useState<PdfMode>("auto");
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
   const hasPdf = items.some((i) => i.type === "file" && i.file.name.toLowerCase().endsWith(".pdf"));
@@ -29,7 +30,7 @@ export default function NewKit() {
     if (creating) return;
     setCreating(true);
     const kitId = await createKit({ title, language, folderId: folderId || undefined });
-    const sources = items.map((i) => (i.type === "file" ? { ...i, deepRead } : i));
+    const sources = items.map((i) => (i.type === "file" ? { ...i, pdfMode } : i));
     runJob(`kit:${kitId}`, async ({ signal, report }) => {
       await addSources(kitId, sources, (name, status) => report(`${status}${name === "kit" ? "" : `: ${name}`}`), signal);
       if ((await db.kits.get(kitId))?.status !== "ready") return;
@@ -67,15 +68,13 @@ export default function NewKit() {
         </div>
 
         {hasPdf && (
-          <label className="flex items-start gap-3 text-sm">
-            <input type="checkbox" className="mt-1 accent-brand-700" checked={deepRead} onChange={(e) => setDeepRead(e.target.checked)} />
-            <span>
-              <b>Read PDFs with AI</b>
-              <span className="block text-muted">
-                Better for diagram-heavy slides and handwriting. Scanned PDFs always use AI. Costs about $0.01–0.05 per PDF; text PDFs are otherwise read for free.
-              </span>
-            </span>
-          </label>
+          <Field label="Reading PDFs" hint="Slides keep a lot in their figures; Gemini reads them for about $0.002 a page. Long text-heavy PDFs (textbook chapters) are read for free on this device unless you choose “Always”.">
+            <select className={inputClass} value={pdfMode} onChange={(e) => setPdfMode(e.target.value as PdfMode)}>
+              <option value="auto">Automatic: Gemini for slides and short PDFs (recommended)</option>
+              <option value="ai">Always with Gemini, figures included</option>
+              <option value="local">Text only, free (skips figures)</option>
+            </select>
+          </Field>
         )}
 
         {error && <ErrorBox error={error} />}

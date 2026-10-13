@@ -20,8 +20,10 @@ export function targetDifficulty(c: Pick<Concept, "attempts" | "mastery">): 1 | 
 }
 
 /**
- * Picks the concepts to practise next. Due reviews come first (most-forgotten first), then
- * weak concepts, then new ones in material order, then the rest by lowest mastery.
+ * Picks the concepts to practise next, interleaving review with new material: about half the
+ * targets are due-for-review or weak concepts (most-forgotten first), the rest are concepts not
+ * seen yet (in material order), topped up from developing and then strong ones. Without the
+ * quota, a few weak early concepts would crowd out the rest of the kit indefinitely.
  * `focus` (concept names) restricts the pool when the student steers the session.
  */
 export function pickTargets(concepts: Concept[], k: number, now = new Date(), focus?: string[]): Concept[] {
@@ -31,18 +33,29 @@ export function pickTargets(concepts: Concept[], k: number, now = new Date(), fo
     const filtered = concepts.filter((c) => wanted.has(c.name.toLowerCase()));
     if (filtered.length) pool = filtered;
   }
-  const rank = (c: Concept): [number, number] => {
-    const seen = c.attempts > 0;
-    if (seen && isDue(c.srs, now)) return [0, retrievability(c.srs, now)];
-    if (seen && c.mastery < 0.4) return [1, c.mastery];
-    if (!seen) return [2, c.order];
-    return [3, c.mastery];
+  const seen = pool.filter((c) => c.attempts > 0);
+  const due = seen.filter((c) => isDue(c.srs, now)).sort((a, b) => retrievability(a.srs, now) - retrievability(b.srs, now));
+  const weak = seen.filter((c) => !isDue(c.srs, now) && c.mastery < 0.4).sort((a, b) => a.mastery - b.mastery);
+  const fresh = pool.filter((c) => c.attempts === 0).sort((a, b) => a.order - b.order);
+  const developing = seen.filter((c) => !isDue(c.srs, now) && c.mastery >= 0.4 && c.mastery < 0.75).sort((a, b) => a.mastery - b.mastery);
+  const strong = seen.filter((c) => !isDue(c.srs, now) && c.mastery >= 0.75).sort((a, b) => +new Date(a.srs.due) - +new Date(b.srs.due));
+
+  const review = [...due, ...weak];
+  const out: Concept[] = [];
+  const take = (list: Concept[], n: number) => {
+    for (const c of list) {
+      if (out.length >= k || n <= 0) break;
+      if (!out.includes(c)) {
+        out.push(c);
+        n--;
+      }
+    }
   };
-  return [...pool]
-    .map((c) => ({ c, r: rank(c) }))
-    .sort((a, b) => a.r[0] - b.r[0] || a.r[1] - b.r[1])
-    .slice(0, k)
-    .map((x) => x.c);
+  const reviewQuota = Math.ceil(k / 2);
+  take(review, reviewQuota);
+  take(fresh, k - out.length);
+  for (const list of [review, developing, fresh, strong]) take(list, k - out.length);
+  return out;
 }
 
 /** Chooses the next unasked question for the target concepts, closest to the right difficulty. */
@@ -53,8 +66,8 @@ export function pickQuestion(questions: Question[], targets: Concept[], recentCo
   for (const q of unasked) {
     const t = byName.get(q.concept.toLowerCase());
     if (!t) continue;
-    // Lower is better: target priority, difficulty mismatch, and avoid the same concept twice in a row.
-    const repeatPenalty = recentConcepts.slice(-2).includes(q.concept) ? 3 : 0;
+    // Lower is better: target priority, difficulty mismatch, and not the same concept as the last few.
+    const repeatPenalty = recentConcepts.slice(-3).includes(q.concept) ? 4 : 0;
     const score = t.i + 2 * Math.abs(q.difficulty - targetDifficulty(t.c)) + repeatPenalty;
     if (!best || score < best.score) best = { q, score };
   }

@@ -13,10 +13,12 @@ recordings, YouTube links) and Mnemo turns it into a study kit:
 - **Games**: Definition Match, Term Builder and Stacker, built from your flashcards.
 - **Tutor**: chat about the material, Socratic by default.
 - **Progress**: mastery per concept, streaks, test history.
+- **Sync** across phone, tablet and laptop with a sync code, end-to-end encrypted.
 - Any of 60+ languages per kit, folders, light/dark mode, installable as a phone app (PWA).
 
-No accounts and no server. The app runs entirely in the browser, keeps everything in IndexedDB,
-and calls the Gemini API directly with your own key.
+**Live at <https://mnemo-iota.vercel.app>.** No accounts. The app runs in the browser, keeps
+everything in IndexedDB, and calls the Gemini API directly with your own key. The only server
+piece is a tiny sync endpoint that stores encrypted blobs it can't read.
 
 > Inspired by [Thea](https://www.theastudy.com/). Not affiliated with it, and none of its code or
 > assets are used.
@@ -27,8 +29,17 @@ and calls the Gemini API directly with your own key.
    <https://aistudio.google.com/apikey>.
 2. **New kit** → add material → **Build study kit**.
 
-Data stays in the browser it was created in. Use **Settings → Export backup** to move it to
-another device or keep a copy.
+**More than one device:** on the first one, **Settings → Sync across devices → Turn on sync**,
+then copy the sync code. On each other device, open the site (on iPhone/iPad: Share → Add to Home
+Screen first, then open it from there), go to **Settings → I have a sync code**, and paste it.
+The API key comes along, so there's nothing else to set up.
+
+How sync works: the code never leaves the device. A vault id and an AES-256-GCM key are derived
+from it (HKDF); the device uploads a gzipped, encrypted snapshot to `/api/sync`, which keeps it in
+private Vercel Blob storage. Every local change is stamped, merges keep the newest version of each
+item, deletions travel as tombstones, and uploads are compare-and-swap on the blob's ETag, so two
+devices saving at once can't overwrite each other. Podcast audio isn't synced (too big); other
+devices can record their own copy from the synced script.
 
 ## Cost
 
@@ -59,6 +70,9 @@ file / link / notes ──► ingest once ──► Markdown text (IndexedDB)
 | `src/lib/study.ts`       | Kit building and each generator                        |
 | `src/lib/smart.ts`       | Adaptive question selection and mastery                |
 | `src/lib/pricing.ts`     | Price table and per-call cost                          |
+| `src/lib/sync.ts`        | Change tracking, merge, and the sync loop              |
+| `src/lib/crypto.ts`      | Sync code, key derivation, encryption                  |
+| `api/sync.ts`            | The sync endpoint (Vercel Function + Blob)             |
 | `src/pages/`             | One file per screen                                    |
 
 ## Development
@@ -73,7 +87,12 @@ just build     # typecheck + production build
 just smoke     # live run of every feature against Gemini; needs GEMINI_API_KEY in .env
 ```
 
-`node scripts/e2e.mjs <url>` drives every screen in headless Chromium with Gemini mocked
-(`npx playwright install chromium` once).
+`node scripts/e2e.mjs <url>` drives every screen in headless Chromium with Gemini mocked,
+including two browser profiles pairing through sync (`npx playwright install chromium` once;
+`E2E_REAL_SYNC=1` uses the real `/api/sync`). `node scripts/real-study.mjs <url> <pdf>...` runs a
+real Smart Study session with real Gemini and dumps the questions and costs to `scratch/real/`.
 
-Pushing to `main` deploys to GitHub Pages via `.github/workflows/deploy.yml`.
+Hosted on Vercel (connected to this repo: every push to `main` deploys). Sync needs a private
+Vercel Blob store connected to the project; `npx vercel storage create <name> --type blob
+--access private` and `npx vercel storage connect <name>` set that up. GitHub Actions runs the
+tests and build on each push.

@@ -7,7 +7,7 @@ import { newCard, review, Rating } from "./srs";
 import { pcmToWav } from "./wav";
 import { decodeAudio, parseJson } from "./gemini";
 import { chunkScript, fitScript } from "./study";
-import { stripFence } from "./ingest";
+import { choosePdfReader, stripFence } from "./ingest";
 import { youtubeId } from "./extract";
 
 describe("pricing", () => {
@@ -104,6 +104,19 @@ describe("smart study", () => {
     const fresh = concept("fresh", { order: 3 });
     const strong = concept("strong", { attempts: 5, mastery: 0.9, srs: { ...newCard(), due: new Date("2027-01-01"), state: 2 } });
     expect(pickTargets([strong, fresh, weak, due], 4, now).map((c) => c.name)).toEqual(["due", "weak", "fresh", "strong"]);
+  });
+
+  it("interleaves review with new concepts instead of drilling only the weak ones", () => {
+    const notDue = { ...newCard(), due: new Date("2027-01-01"), state: 2 };
+    const weak = [0, 1, 2].map((i) => concept(`weak${i}`, { order: i, attempts: 2, mastery: 0.1, srs: notDue }));
+    const fresh = [3, 4, 5, 6, 7, 8].map((i) => concept(`new${i}`, { order: i }));
+    const picked = pickTargets([...weak, ...fresh], 4, now).map((c) => c.name);
+    expect(picked).toEqual(["weak0", "weak1", "new3", "new4"]);
+  });
+
+  it("fills with new concepts when there's nothing to review", () => {
+    const fresh = [0, 1, 2, 3, 4].map((i) => concept(`new${i}`, { order: i }));
+    expect(pickTargets(fresh, 4, now).map((c) => c.name)).toEqual(["new0", "new1", "new2", "new3"]);
   });
 
   it("respects a steering focus", () => {
@@ -233,5 +246,16 @@ describe("podcast length", () => {
     expect(words).toBeLessThanOrEqual(450 * 1.15);
     expect(out[0]).toBe(lines[0]);
     expect(out.slice(-6)).toEqual(lines.slice(-6));
+  });
+});
+
+describe("PDF reader choice", () => {
+  it("reads slides and short PDFs with Gemini, long text-dense ones locally", () => {
+    expect(choosePdfReader(8, 244, "auto")).toBe("ai"); // the 8-slide lecture deck
+    expect(choosePdfReader(21, 500, "auto")).toBe("ai");
+    expect(choosePdfReader(300, 3200, "auto")).toBe("local"); // textbook
+    expect(choosePdfReader(300, 3200, "ai")).toBe("ai");
+    expect(choosePdfReader(8, 244, "local")).toBe("local");
+    expect(choosePdfReader(40, 50, "local")).toBe("ai"); // scanned: local text is useless
   });
 });

@@ -34,6 +34,9 @@ export default function SmartStudy() {
   const recent = useRef<string[]>([]);
   const prefetching = useRef(false);
   const started = useRef(false);
+  const advancing = useRef(false);
+  const askedIds = useRef(new Set<string>());
+  const saving = useRef<Promise<unknown>>(Promise.resolve());
 
   const targetsFor = useCallback((all: Concept[]) => pickTargets(all, 4, new Date(), focus), [focus]);
 
@@ -50,16 +53,24 @@ export default function SmartStudy() {
   );
 
   const next = useCallback(async () => {
+    if (advancing.current) return;
+    advancing.current = true;
+    try {
+      await advance();
+    } finally {
+      advancing.current = false;
+    }
+  }, [kitId, targetsFor, generate]);
+
+  const advance = async () => {
     setError("");
-    setPhase("answering");
-    setPicked([]);
-    setText("");
-    setFeedback("");
-    setOutcome(null);
+    // The last answer must be saved (askedAt) before picking, or the same question can come back.
+    await saving.current;
+    const fresh = (pool: Question[]) => pool.filter((p) => !askedIds.current.has(p.id));
     const all = await db.concepts.where("kitId").equals(kitId).sortBy("order");
     if (!all.length) return setError("This kit has no concepts yet.");
     const targets = targetsFor(all);
-    let pool = await db.questions.where("[kitId+origin]").equals([kitId, "smart"]).toArray();
+    let pool = fresh(await db.questions.where("[kitId+origin]").equals([kitId, "smart"]).toArray());
     let q = pickQuestion(pool, targets, recent.current) ?? pickQuestion(pool, all, recent.current);
     if (!q) {
       setQuestion(null);
@@ -71,7 +82,7 @@ export default function SmartStudy() {
         return setError((err as Error).message);
       }
       setLoading("");
-      pool = await db.questions.where("[kitId+origin]").equals([kitId, "smart"]).toArray();
+      pool = fresh(await db.questions.where("[kitId+origin]").equals([kitId, "smart"]).toArray());
       q = pickQuestion(pool, targets, recent.current) ?? pickQuestion(pool, all, recent.current);
       if (!q) return setError("Couldn't create questions for this material. Try again or change the focus.");
     } else if (needsMore(pool, targets) && !prefetching.current) {
@@ -81,8 +92,14 @@ export default function SmartStudy() {
         .catch(() => {})
         .finally(() => (prefetching.current = false));
     }
+    // Swap everything in one render so the old question never flashes back as unanswered.
+    setPhase("answering");
+    setPicked([]);
+    setText("");
+    setFeedback("");
+    setOutcome(null);
     setQuestion(q);
-  }, [kitId, targetsFor, generate]);
+  };
 
   useEffect(() => {
     if (kit?.status === "ready" && concepts?.length && !started.current) {
@@ -97,6 +114,8 @@ export default function SmartStudy() {
     recent.current = [...recent.current, q.concept].slice(-5);
     // Needing a hint still counts, just for less (applyAnswer applies the same discount to mastery).
     setRound((r) => ({ answered: r.answered + 1, score: r.score + (usedHint ? score * 0.6 : score) }));
+    askedIds.current.add(q.id);
+    const save = (async () => {
     const concept = await db.concepts.where("kitId").equals(kitId).filter((c) => c.name === q.concept).first();
     await db.transaction("rw", db.concepts, db.questions, db.attempts, db.kits, async () => {
       if (concept) await db.concepts.put(applyAnswer(concept, score, usedHint));
@@ -104,6 +123,9 @@ export default function SmartStudy() {
       await db.attempts.add({ id: newId(), kitId, questionId: q.id, concept: q.concept, mode: "smart", response, score, usedHint, feedback: fb, at: Date.now() });
       await db.kits.update(kitId, { lastStudiedAt: Date.now() });
     });
+    })();
+    saving.current = save;
+    await save;
   };
 
   const choose = (i: number) => {

@@ -11,6 +11,21 @@ import { getSettings } from "./settings";
 const INLINE_LIMIT = 14 * 1024 * 1024;
 /** Text PDFs with fewer extractable characters per page than this are probably scans. */
 const SCANNED_PDF_CHARS_PER_PAGE = 200;
+/**
+ * Lecture slides carry much of their content in figures, which local text extraction can't see.
+ * Gemini reads those (about $0.002 per page). Long, text-dense PDFs (textbook chapters) read
+ * locally for free instead, unless the user forces AI reading.
+ */
+const AI_PDF_MAX_PAGES = 60;
+const TEXT_DENSE_CHARS_PER_PAGE = 1500;
+
+export type PdfMode = "auto" | "ai" | "local";
+
+export function choosePdfReader(pages: number, charsPerPage: number, mode: PdfMode): "ai" | "local" {
+  if (charsPerPage < SCANNED_PDF_CHARS_PER_PAGE) return "ai"; // scanned: local has nothing to give
+  if (mode !== "auto") return mode;
+  return pages <= AI_PDF_MAX_PAGES || charsPerPage < TEXT_DENSE_CHARS_PER_PAGE ? "ai" : "local";
+}
 
 export interface IngestResult {
   text: string;
@@ -19,8 +34,8 @@ export interface IngestResult {
 
 export interface IngestOptions {
   kitId: string;
-  /** Force Gemini to read a PDF even when it has a text layer (better for diagrams). */
-  deepRead?: boolean;
+  /** How to read PDFs; "auto" uses Gemini for slides and short documents. */
+  pdfMode?: PdfMode;
   signal?: AbortSignal;
   onStatus?: (status: string) => void;
 }
@@ -41,12 +56,10 @@ export async function ingestFile(file: File, kind: SourceKind, opts: IngestOptio
       return { text, via: "local" };
     }
     case "pdf": {
-      if (!opts.deepRead) {
-        opts.onStatus?.("Reading PDF text");
-        const pdf = await pdfText(file);
-        if (pdf.charsPerPage >= SCANNED_PDF_CHARS_PER_PAGE) return { text: pdf.text, via: "local" };
-      }
-      opts.onStatus?.("Reading PDF with Gemini");
+      opts.onStatus?.("Reading PDF");
+      const pdf = await pdfText(file);
+      if (choosePdfReader(pdf.pages, pdf.charsPerPage, opts.pdfMode ?? "auto") === "local") return { text: pdf.text, via: "local" };
+      opts.onStatus?.(`Reading ${pdf.pages} pages with Gemini, figures included`);
       return transcribe(file, "document", "smart", opts);
     }
     case "image":

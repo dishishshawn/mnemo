@@ -1,6 +1,6 @@
 import { db, newId, type Concept, type Flashcard, type Kit, type Output, type Question, type Source } from "./db";
 import { GeminiError, generateJson, generateText, streamText, synthesizeDialogue } from "./gemini";
-import { ingestFile, ingestWebPage, ingestYouTube, stripFence } from "./ingest";
+import { ingestFile, ingestWebPage, ingestYouTube, stripFence, type PdfMode } from "./ingest";
 import { kindOf } from "./extract";
 import {
   analyzeSchema,
@@ -58,7 +58,7 @@ const norm = (s: string) => s.trim().toLowerCase();
 // ---------- Creating kits and adding material ----------
 
 export type NewSource =
-  | { type: "file"; file: File; deepRead?: boolean }
+  | { type: "file"; file: File; pdfMode?: PdfMode }
   | { type: "youtube"; url: string }
   | { type: "web"; url: string }
   | { type: "text"; name: string; text: string };
@@ -114,7 +114,7 @@ export async function addSources(
       const opts = { kitId, signal, onStatus: report };
       const result =
         item.type === "file"
-          ? await ingestFile(item.file, source.kind, { ...opts, deepRead: item.deepRead })
+          ? await ingestFile(item.file, source.kind, { ...opts, pdfMode: item.pdfMode })
           : item.type === "youtube"
             ? await ingestYouTube(item.url, opts)
             : item.type === "web"
