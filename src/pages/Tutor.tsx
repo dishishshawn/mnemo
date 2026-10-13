@@ -3,7 +3,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { Send, Square, Trash } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Markdown } from "../components/Markdown";
-import { Button, ErrorBox, inputClass, PageHeader, Spinner } from "../components/ui";
+import { Button, ErrorBox, inputClass, PageHeader, Spinner, MissingKit } from "../components/ui";
 import { db, newId, type Chat } from "../lib/db";
 import { useKit } from "../lib/hooks";
 import { tutorReply } from "../lib/study";
@@ -23,6 +23,8 @@ export default function Tutor() {
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth" });
   }, [chat?.messages.length, streaming]);
+
+  if (kit === null) return <MissingKit />;
 
   if (!kit || chat === undefined) return <Spinner label="Loading" />;
   const socratic = chat?.socratic ?? true;
@@ -45,11 +47,18 @@ export default function Tutor() {
     await save({ messages: history });
     setStreaming("");
     abort.current = new AbortController();
+    let partial = "";
+    const onText = (t: string) => {
+      partial = t;
+      setStreaming(t);
+    };
     try {
-      const reply = await tutorReply(kitId, history, socratic, setStreaming, abort.current.signal);
+      const reply = await tutorReply(kitId, history, socratic, onText, abort.current.signal);
       await save({ messages: [...history, { role: "model", text: reply, at: Date.now() }] });
     } catch (err) {
-      if (!abort.current.signal.aborted) setError((err as Error).message);
+      // Keep what arrived before Stop, so the conversation still alternates user/model.
+      if (abort.current.signal.aborted) await save({ messages: [...history, { role: "model", text: partial ? `${partial} …` : "(stopped)", at: Date.now() }] });
+      else setError((err as Error).message);
     } finally {
       setStreaming(null);
     }
@@ -67,7 +76,7 @@ export default function Tutor() {
               <input type="checkbox" className="accent-brand-700" checked={socratic} onChange={(e) => save({ socratic: e.target.checked })} />
               Socratic
             </label>
-            {messages.length > 0 && (
+            {messages.length > 0 && streaming === null && (
               <Button variant="ghost" size="sm" onClick={() => confirm("Clear this conversation?") && save({ messages: [] })} aria-label="Clear chat">
                 <Trash className="size-4" />
               </Button>

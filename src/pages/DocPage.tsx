@@ -1,7 +1,7 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { Download, Printer, RefreshCw, ScrollText } from "lucide-react";
 import { Markdown } from "../components/Markdown";
-import { Button, Card, Empty, ErrorBox, PageHeader, Spinner } from "../components/ui";
+import { Button, Card, Empty, ErrorBox, PageHeader, Spinner, MissingKit } from "../components/ui";
 import { db } from "../lib/db";
 import { download, slug, useKit } from "../lib/hooks";
 import { runJob, useJob } from "../lib/jobs";
@@ -26,6 +26,8 @@ export default function DocPage({ type }: { type: "guide" | "summary" }) {
       await generateDocument(kitId, type, signal);
       await db.outputs.bulkDelete(old);
     });
+
+  if (kit === null) return <MissingKit />;
 
   if (!kit || !docs) return <Spinner label="Loading" />;
   const copy = COPY[type];

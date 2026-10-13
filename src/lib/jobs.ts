@@ -25,16 +25,19 @@ export function runJob(
 ): void {
   if (jobs.get(key) && !jobs.get(key)!.done) return;
   const controller = new AbortController();
-  const job: Job = { status: "Starting", controller };
-  jobs.set(key, job);
+  jobs.set(key, { status: "Starting", controller });
   emit();
+  // A cancelled job can still settle later; only touch the registry while it's still ours.
+  const mine = () => jobs.get(key)?.controller === controller;
   const report = (status: string, progress?: number) => {
+    if (!mine()) return;
     jobs.set(key, { ...jobs.get(key)!, status, progress });
     emit();
   };
   fn({ signal: controller.signal, report })
-    .then(() => jobs.delete(key))
+    .then(() => mine() && jobs.delete(key))
     .catch((err: Error) => {
+      if (!mine()) return;
       if (controller.signal.aborted) jobs.delete(key);
       else jobs.set(key, { ...jobs.get(key)!, error: err.message, done: true });
     })
@@ -47,9 +50,9 @@ export function cancelJob(key: string) {
   emit();
 }
 
-export function clearJob(key: string) {
-  jobs.delete(key);
-  emit();
+/** Cancels every job for a kit (keys look like "<kind>:<kitId>"). */
+export function cancelKitJobs(kitId: string) {
+  for (const key of [...jobs.keys()]) if (key.endsWith(`:${kitId}`)) cancelJob(key);
 }
 
 function subscribe(l: () => void) {
@@ -61,3 +64,6 @@ export function useJob(key: string): Job | undefined {
   useSyncExternalStore(subscribe, () => version);
   return jobs.get(key);
 }
+
+/** Test hook: read a job without subscribing. */
+export const __peek = (key: string): Omit<Job, "controller"> | undefined => jobs.get(key);

@@ -20,11 +20,14 @@ export default function NewKit() {
   const [folderId, setFolderId] = useState("");
   const [deepRead, setDeepRead] = useState(false);
   const [error, setError] = useState("");
+  const [creating, setCreating] = useState(false);
   const hasPdf = items.some((i) => i.type === "file" && i.file.name.toLowerCase().endsWith(".pdf"));
 
   const create = async () => {
     if (!settings.apiKey) return setError("Add your Gemini API key in Settings first.");
     if (!items.length) return setError("Add at least one file, link, or some notes.");
+    if (creating) return;
+    setCreating(true);
     const kitId = await createKit({ title, language, folderId: folderId || undefined });
     const sources = items.map((i) => (i.type === "file" ? { ...i, deepRead } : i));
     runJob(`kit:${kitId}`, async ({ signal, report }) => {
@@ -76,7 +79,7 @@ export default function NewKit() {
         )}
 
         {error && <ErrorBox error={error} />}
-        <Button size="lg" className="w-full" onClick={create} disabled={!items.length}>
+        <Button size="lg" className="w-full" onClick={create} disabled={!items.length} loading={creating}>
           <Sparkles className="size-4" /> Build study kit
         </Button>
       </Card>

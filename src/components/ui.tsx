@@ -204,3 +204,12 @@ export function Segmented<T extends string>({ value, options, onChange }: { valu
     </div>
   );
 }
+
+export function MissingKit() {
+  return (
+    <div className="space-y-4">
+      <p>This kit doesn't exist (it may have been deleted).</p>
+      <LinkButton to="/">Back to kits</LinkButton>
+    </div>
+  );
+}

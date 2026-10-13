@@ -101,7 +101,10 @@ export function SourcePicker({ items, onChange }: { items: NewSource[]; onChange
           <Upload className="size-8 text-brand-600" />
           <div className="font-medium">Drop files here or tap to choose</div>
           <div className="text-xs text-muted">PDF, slides (PPTX), Word, photos of notes, audio, video, text and more</div>
-          <input ref={fileInput} type="file" multiple accept={ACCEPT} className="hidden" onChange={(e) => addFiles(e.target.files)} />
+          <input ref={fileInput} type="file" multiple accept={ACCEPT} className="hidden" onChange={(e) => {
+              addFiles(e.target.files);
+              e.target.value = ""; // so picking the same file again still fires onChange
+            }} />
         </div>
       )}
 

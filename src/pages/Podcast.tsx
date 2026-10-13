@@ -1,7 +1,7 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { Download, Headphones, Trash } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Badge, Button, Card, Empty, ErrorBox, Field, inputClass, PageHeader, Progress, Spinner } from "../components/ui";
+import { Badge, Button, Card, Empty, ErrorBox, Field, inputClass, PageHeader, Progress, Spinner, MissingKit } from "../components/ui";
 import { db, type Output } from "../lib/db";
 import { download, slug, useKit } from "../lib/hooks";
 import { cancelJob, runJob, useJob } from "../lib/jobs";
@@ -30,6 +30,8 @@ export default function Podcast() {
         onProgress: (done, total, stage) => report(stage === "Recording audio" ? `Recording audio (${done}/${total})` : stage, total ? done / total : 0),
       });
     });
+
+  if (kit === null) return <MissingKit />;
 
   if (!kit || !episodes) return <Spinner label="Loading" />;
 

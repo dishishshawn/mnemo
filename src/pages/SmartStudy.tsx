@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { Check, Eye, Lightbulb, Sparkles, Target, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { InlineMarkdown, Markdown } from "../components/Markdown";
-import { Badge, Button, Card, ErrorBox, inputClass, PageHeader, Progress, Spinner } from "../components/ui";
+import { Badge, Button, Card, ErrorBox, inputClass, PageHeader, Progress, Spinner, MissingKit } from "../components/ui";
 import { db, newId, type Concept, type Question } from "../lib/db";
 import { useConcepts, useKit } from "../lib/hooks";
 import { applyAnswer, BATCH_SIZE, levelOf, needsMore, pickQuestion, pickTargets } from "../lib/smart";
@@ -136,20 +136,27 @@ export default function SmartStudy() {
 
   const giveUp = () => question && finish(question, 0, phase === "retry", "(revealed)");
 
+  const roundDone = round.answered > 0 && round.answered % ROUND === 0 && phase === "done";
+  const keepGoing = () => {
+    setRound({ answered: 0, score: 0 });
+    next();
+  };
+
   // Keyboard: 1-4 to answer, Enter for next.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).tagName === "TEXTAREA" || (e.target as HTMLElement).tagName === "INPUT") return;
-      if (phase === "done" && e.key === "Enter") next();
+      if (phase === "done" && e.key === "Enter") (roundDone ? keepGoing : next)();
       if (question && question.type !== "short" && /^[1-4]$/.test(e.key)) choose(Number(e.key) - 1);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  if (kit === null) return <MissingKit />;
+
   if (!kit || !concepts) return <Spinner label="Loading" />;
 
-  const roundDone = round.answered > 0 && round.answered % ROUND === 0 && phase === "done";
   const currentConcept = concepts.find((c) => c.name === question?.concept);
 
   return (
@@ -307,7 +314,7 @@ export default function SmartStudy() {
               )}
               <Markdown className="text-sm">{question.explanation}</Markdown>
               {roundDone ? (
-                <RoundSummary answered={ROUND} score={round.score} concepts={concepts} onContinue={() => { setRound({ answered: 0, score: 0 }); next(); }} />
+                <RoundSummary answered={ROUND} score={round.score} concepts={concepts} onContinue={keepGoing} />
               ) : (
                 <Button onClick={next} loading={!!loading} className="w-full">
                   Next question

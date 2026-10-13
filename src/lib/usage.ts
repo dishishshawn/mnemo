@@ -72,7 +72,8 @@ export function taskLabel(task: string): string {
 export function projectMonth(spentThisMonth: number, now = new Date()): number {
   const start = monthStart(now);
   const end = new Date(now.getFullYear(), now.getMonth() + 1, 1).getTime();
-  const elapsed = Math.max(1, (now.getTime() - start) / 86_400_000);
+  // A quarter-day floor keeps the first hours of a month from projecting wildly.
+  const elapsed = Math.max(0.25, (now.getTime() - start) / 86_400_000);
   const days = (end - start) / 86_400_000;
   return (spentThisMonth / elapsed) * days;
 }

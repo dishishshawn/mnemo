@@ -1,5 +1,5 @@
 import { db, newId, type Concept, type Flashcard, type Kit, type Output, type Question, type Source } from "./db";
-import { generateJson, generateText, streamText, synthesizeDialogue } from "./gemini";
+import { GeminiError, generateJson, generateText, streamText, synthesizeDialogue } from "./gemini";
 import { ingestFile, ingestWebPage, ingestYouTube, stripFence } from "./ingest";
 import { kindOf } from "./extract";
 import {
@@ -126,6 +126,15 @@ export async function addSources(
     }
   }
 
+  if (signal?.aborted) {
+    await db.sources
+      .where("id")
+      .anyOf(rows.map((r) => r.source.id))
+      .filter((s) => s.status === "pending" || s.status === "processing")
+      .modify({ status: "error", error: "Cancelled before it was read." });
+  }
+  // An existing kit stays usable if adding to it fails; the error surfaces on the job instead.
+  const established = (await db.concepts.where("kitId").equals(kitId).count()) > 0;
   const ready = await db.sources.where("kitId").equals(kitId).filter((s) => s.status === "ready").count();
   if (!ready) {
     await db.kits.update(kitId, { status: "error", error: "None of the material could be read." });
@@ -134,8 +143,12 @@ export async function addSources(
   try {
     onStatus?.("kit", "Mapping the key concepts");
     await analyzeKit(kitId, signal);
-    await db.kits.update(kitId, { status: "ready", updatedAt: Date.now() });
+    await db.kits.update(kitId, { status: "ready", error: undefined, updatedAt: Date.now() });
   } catch (err) {
+    if (established) {
+      await db.kits.update(kitId, { status: "ready" });
+      throw err;
+    }
     await db.kits.update(kitId, { status: "error", error: (err as Error).message });
   }
 }
@@ -162,6 +175,7 @@ export async function analyzeKit(kitId: string, signal?: AbortSignal): Promise<v
   });
   const keep = new Set(concepts.map((c) => c.id));
   await db.transaction("rw", db.concepts, db.kits, async () => {
+    if (!(await db.kits.get(kitId))) return; // deleted while Gemini was working
     await db.concepts.bulkDelete(existing.filter((c) => !keep.has(c.id)).map((c) => c.id));
     await db.concepts.bulkPut(concepts);
     const untitled = kit.title === "New study kit";
@@ -212,6 +226,7 @@ export async function generateFlashcards(kitId: string, opts: { count?: number; 
       srs: newCard(),
       createdAt: Date.now(),
     }));
+  await kitOrThrow(kitId); // deleted while Gemini was working?
   await db.flashcards.bulkAdd(cards);
   return cards;
 }
@@ -282,6 +297,7 @@ export async function generateSmartQuestions(
     schema: questionSchema,
   });
   const questions = toQuestions(kitId, res, "smart", concepts);
+  await kitOrThrow(kitId);
   await db.questions.bulkAdd(questions);
   return questions;
 }
@@ -315,6 +331,7 @@ export async function generateTestQuestions(
     schema: questionSchema,
   });
   const questions = toQuestions(kitId, res, "test", concepts);
+  await kitOrThrow(kitId);
   await db.questions.bulkAdd(questions);
   return questions;
 }
@@ -341,11 +358,17 @@ export async function gradeShortAnswers(kitId: string, items: ShortAnswerItem[],
     schema: gradeSchema,
   });
   const out = new Map<string, GradeResult["results"][number]>();
-  for (const r of res.results) out.set(r.id, { ...r, score: Math.min(1, Math.max(0, r.score)) });
+  const byId = new Map(res.results.map((r) => [r.id, r]));
+  items.forEach((it, i) => {
+    // Models occasionally rename ids; fall back to position when the counts line up.
+    const r = byId.get(it.id) ?? (res.results.length === items.length ? res.results[i] : undefined);
+    if (r) out.set(it.id, { ...r, id: it.id, score: Math.min(1, Math.max(0, r.score)) });
+  });
   // A blank answer is wrong no matter what the grader says.
   for (const it of items)
     if (!it.studentAnswer.trim())
       out.set(it.id, { id: it.id, verdict: "incorrect", score: 0, feedback: out.get(it.id)?.feedback ?? "No answer given." });
+  if (items.some((it) => !out.has(it.id))) throw new GeminiError("The grader skipped an answer. Try again.", "bad-json");
   return out;
 }
 
@@ -374,6 +397,7 @@ export async function generateDocument(kitId: string, type: "guide" | "summary",
     content: stripFence(text),
     createdAt: Date.now(),
   };
+  await kitOrThrow(kitId);
   await db.outputs.add(output);
   return output;
 }
@@ -455,6 +479,7 @@ export async function generatePodcast(
     durationSec: Math.round(pcmSeconds(wav.length - 44, sampleRate)),
     createdAt: Date.now(),
   };
+  await kitOrThrow(kitId);
   await db.outputs.add(output);
   return output;
 }

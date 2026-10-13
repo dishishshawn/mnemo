@@ -1,10 +1,10 @@
 import clsx from "clsx";
 import { useLiveQuery } from "dexie-react-hooks";
 import { Check, ClipboardCheck, Timer, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { InlineMarkdown, Markdown } from "../components/Markdown";
-import { Badge, Button, Card, ErrorBox, Field, inputClass, PageHeader, Spinner } from "../components/ui";
+import { Badge, Button, Card, ErrorBox, Field, inputClass, PageHeader, Spinner, MissingKit } from "../components/ui";
 import { db, newId, type Question, type TestRun } from "../lib/db";
 import { useKit } from "../lib/hooks";
 import { applyAnswer } from "../lib/smart";
@@ -18,6 +18,8 @@ export default function PracticeTest() {
   const runId = params.get("run");
   const run = useLiveQuery(async () => (runId ? ((await db.tests.get(runId)) ?? null) : null), [runId]);
   const history = useLiveQuery(() => db.tests.where("kitId").equals(kitId).reverse().sortBy("startedAt"), [kitId]);
+
+  if (kit === null) return <MissingKit />;
 
   if (!kit) return <Spinner label="Loading" />;
   if (runId && run === undefined) return <Spinner label="Loading" />;
@@ -150,6 +152,10 @@ function TestView({ run, onExit }: { run: TestRun; onExit: () => void }) {
     const t = setTimeout(() => db.tests.update(run.id, { answers }), 400);
     return () => clearTimeout(t);
   }, [answers, finished, run.id]);
+  // ...and flush whatever the debounce hadn't written yet when leaving the page.
+  const latest = useRef(answers);
+  latest.current = answers;
+  useEffect(() => () => void db.tests.update(run.id, { answers: latest.current }), [run.id]);
 
   const submit = async () => {
     if (!questions) return;
@@ -191,8 +197,9 @@ function TestView({ run, onExit }: { run: TestRun; onExit: () => void }) {
   };
 
   useEffect(() => {
-    if (remaining === 0 && !finished && !grading) submit();
-  }, [remaining]);
+    // Also waits for the questions to load, for a test reopened after its deadline.
+    if (remaining === 0 && questions && !finished && !grading) submit();
+  }, [remaining, questions]);
 
   const answered = useMemo(() => Object.values(answers).filter((a) => a.trim()).length, [answers]);
   if (!questions) return <Spinner label="Loading test" />;

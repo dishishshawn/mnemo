@@ -1,5 +1,5 @@
 import { useLiveQuery } from "dexie-react-hooks";
-import { Card, PageHeader, Spinner } from "../components/ui";
+import { Card, PageHeader, Spinner, MissingKit } from "../components/ui";
 import { db } from "../lib/db";
 import { useConcepts, useKit } from "../lib/hooks";
 import { levelOf } from "../lib/smart";
@@ -35,6 +35,8 @@ export default function ProgressPage() {
     ]);
     return { attempts: attempts.sort((a, b) => b.at - a.at), cards, tests: tests.filter((t) => t.finishedAt).sort((a, b) => b.startedAt - a.startedAt), questions: new Map(questions.map((q) => [q.id, q])) };
   }, [kitId]);
+
+  if (kit === null) return <MissingKit />;
 
   if (!kit || !concepts || !data) return <Spinner label="Loading" />;
 

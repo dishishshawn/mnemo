@@ -7,8 +7,8 @@ import { generateText, uploadFile, type Role } from "./gemini";
 import { TRANSCRIBE_PROMPTS } from "./prompts";
 import { getSettings } from "./settings";
 
-/** Above this, send media through the Files API instead of inline base64. */
-const INLINE_LIMIT = 18 * 1024 * 1024;
+/** Above this, use the Files API. Base64 inflates by 4/3 and the whole inline request must stay under ~20 MB. */
+const INLINE_LIMIT = 14 * 1024 * 1024;
 /** Text PDFs with fewer extractable characters per page than this are probably scans. */
 const SCANNED_PDF_CHARS_PER_PAGE = 200;
 
@@ -83,6 +83,7 @@ async function transcribe(
     kitId: opts.kitId,
     signal: opts.signal,
     contents: [{ role: "user", parts: [part, { text: TRANSCRIBE_PROMPTS[promptKey] }] }],
+    allowTruncated: true,
     // Lecture video doesn't need high-res frames; low resolution cuts video tokens by ~3x.
     config: promptKey === "video" ? { mediaResolution: MediaResolution.MEDIA_RESOLUTION_LOW } : undefined,
   });
@@ -97,6 +98,7 @@ export async function ingestYouTube(url: string, opts: IngestOptions): Promise<I
     kitId: opts.kitId,
     signal: opts.signal,
     contents: [{ role: "user", parts: [{ fileData: { fileUri: url } }, { text: TRANSCRIBE_PROMPTS.video }] }],
+    allowTruncated: true,
     config: { mediaResolution: MediaResolution.MEDIA_RESOLUTION_LOW },
   });
   return { text: stripFence(text), via: modelName("fast") };
@@ -110,6 +112,7 @@ export async function ingestWebPage(url: string, opts: IngestOptions): Promise<I
     kitId: opts.kitId,
     signal: opts.signal,
     contents: `${TRANSCRIBE_PROMPTS.web}\n\nURL: ${url}`,
+    allowTruncated: true,
     config: { tools: [{ urlContext: {} }] },
   });
   return { text: stripFence(text), via: modelName("fast") };

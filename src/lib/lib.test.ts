@@ -189,3 +189,31 @@ describe("parsing", () => {
     expect(youtubeId("https://example.com")).toBeNull();
   });
 });
+
+describe("jobs", () => {
+  it("a cancelled job settling late doesn't remove its replacement", async () => {
+    const { runJob, cancelJob } = await import("./jobs");
+    const peek = async () => (await import("./jobs")).__peek?.("k");
+    let finishFirst!: () => void;
+    runJob("k", () => new Promise<void>((r) => (finishFirst = r)));
+    cancelJob("k");
+    let report!: (s: string) => void;
+    runJob("k", ({ report: rep }) => {
+      report = rep;
+      return new Promise<void>(() => {});
+    });
+    report("second running");
+    finishFirst();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(await peek()).toMatchObject({ status: "second running" });
+  });
+});
+
+describe("usage projection", () => {
+  it("doesn't understate spend in the first hours of a month", async () => {
+    const { projectMonth } = await import("./usage");
+    // 6 hours into October (31 days), $0.10 spent -> $0.40/day pace -> $12.40.
+    const now = new Date(2026, 9, 1, 6, 0, 0);
+    expect(projectMonth(0.1, now)).toBeCloseTo(12.4, 1);
+  });
+});

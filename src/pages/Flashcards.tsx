@@ -3,7 +3,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { Layers, Pencil, Plus, RotateCcw, Shuffle, Sparkles, Trash } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { InlineMarkdown } from "../components/Markdown";
-import { Badge, Button, Card, Empty, ErrorBox, Field, inputClass, Modal, PageHeader, Progress, Segmented, Spinner } from "../components/ui";
+import { Badge, Button, Card, Empty, ErrorBox, Field, inputClass, Modal, PageHeader, Progress, Segmented, Spinner, MissingKit } from "../components/ui";
 import { db, newId, type Flashcard } from "../lib/db";
 import { shuffle, useKit } from "../lib/hooks";
 import { runJob, useJob } from "../lib/jobs";
@@ -24,6 +24,8 @@ export default function Flashcards() {
       report("Writing flashcards");
       await generateFlashcards(kitId, { count, focus: f, signal });
     });
+
+  if (kit === null) return <MissingKit />;
 
   if (!kit || !cards) return <Spinner label="Loading" />;
 

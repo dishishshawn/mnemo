@@ -3,7 +3,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { ChevronDown, Plus, RefreshCw, Trash } from "lucide-react";
 import { useState } from "react";
 import { KIND_ICON, SourcePicker } from "../components/SourcePicker";
-import { Badge, Button, Card, ErrorBox, Modal, PageHeader, Spinner } from "../components/ui";
+import { Badge, Button, Card, ErrorBox, Modal, PageHeader, Spinner, MissingKit } from "../components/ui";
 import { db } from "../lib/db";
 import { useKit } from "../lib/hooks";
 import { runJob, useJob } from "../lib/jobs";
@@ -42,6 +42,8 @@ export default function Sources() {
     if (!confirm("Remove this source? Existing flashcards and questions are kept.")) return;
     await db.sources.delete(id);
   };
+
+  if (kit === null) return <MissingKit />;
 
   if (!kit || !sources) return <Spinner label="Loading" />;
   const totalChars = sources.reduce((n, s) => n + s.text.length, 0);

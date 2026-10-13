@@ -116,7 +116,7 @@ export const questionSchema = {
         properties: {
           concept: { type: "string" },
           type: { type: "string", enum: ["mcq", "tf", "short"] },
-          difficulty: { type: "integer", enum: [1, 2, 3] },
+          difficulty: { type: "integer", minimum: 1, maximum: 3, description: "1, 2 or 3" },
           prompt: { type: "string" },
           options: {
             type: "array",

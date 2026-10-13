@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { useLiveQuery } from "dexie-react-hooks";
 import { Delete, Gamepad2, Layers, Lightbulb, Puzzle, Shuffle, Trophy } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Badge, Button, Card, Empty, LinkButton, PageHeader, Spinner } from "../components/ui";
+import { Badge, Button, Card, Empty, LinkButton, PageHeader, Spinner, MissingKit } from "../components/ui";
 import { db, newId, type Flashcard, type GameScore } from "../lib/db";
 import { shuffle, useKit } from "../lib/hooks";
 
@@ -23,6 +23,8 @@ export default function Games() {
     const t = all.filter((c) => c.kind === "term" && plain(c.front).length <= 40);
     return t.length >= 6 ? t : all.filter((c) => plain(c.front).length <= 60);
   }, [cards]);
+
+  if (kit === null) return <MissingKit />;
 
   if (!kit || !cards || !scores) return <Spinner label="Loading" />;
 
@@ -240,6 +242,13 @@ function Builder({ cards, onFinish }: { cards: Flashcard[]; onFinish: (n: number
     }
   };
 
+  if (!deck.length)
+    return (
+      <Card className="p-8 text-center text-sm text-muted">
+        Term Builder needs flashcards with short terms (24 letters or fewer). Add a few in Flashcards.
+      </Card>
+    );
+
   if (done)
     return (
       <Card className="space-y-3 p-8 text-center">
@@ -329,13 +338,15 @@ function Stacker({ cards, onFinish, best }: { cards: Flashcard[]; onFinish: (n: 
     return bag.current.pop()!;
   }, [cards]);
 
+  // Draw outside the state updater: StrictMode runs updaters twice, which would eat two cards.
   const push = useCallback(() => {
-    setStack((s) => {
-      const next = [...s, draw()];
-      if (next.length >= MAX_STACK) setOver(true);
-      return next;
-    });
+    const card = draw();
+    setStack((s) => [...s, card]);
   }, [draw]);
+
+  useEffect(() => {
+    if (started && stack.length >= MAX_STACK) setOver(true);
+  }, [started, stack.length]);
 
   useEffect(() => {
     if (!started || over) return;

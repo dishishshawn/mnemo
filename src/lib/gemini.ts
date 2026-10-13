@@ -66,6 +66,8 @@ export interface CallOptions {
   kitId?: string;
   system?: string;
   contents: Content[] | string;
+  /** Keep a cut-off answer (with a note) instead of failing. For transcripts, where most is better than none. */
+  allowTruncated?: boolean;
   config?: GenerateContentConfig;
   signal?: AbortSignal;
 }
@@ -156,8 +158,10 @@ export async function generateText(opts: CallOptions): Promise<string> {
   record(model, opts, res.usageMetadata);
   checkFinish(res);
   const text = res.text ?? "";
-  if (res.candidates?.[0]?.finishReason === "MAX_TOKENS" && !text)
-    throw new GeminiError("The answer was cut off. Try again with less material.", "truncated");
+  if (res.candidates?.[0]?.finishReason === "MAX_TOKENS") {
+    if (!opts.allowTruncated || !text) throw new GeminiError("The answer was cut off. Try again with less material.", "truncated");
+    return `${text}\n\n[Truncated: Gemini hit its output limit here. Split this source into smaller parts to get the rest.]`;
+  }
   return text;
 }
 

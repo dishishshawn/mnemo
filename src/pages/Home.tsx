@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { Badge, Button, Card, Empty, inputClass, LinkButton, Modal, PageHeader, Progress } from "../components/ui";
 import { db, deleteKit, newId, type Kit } from "../lib/db";
+import { cancelKitJobs } from "../lib/jobs";
 import { isDue } from "../lib/srs";
 import { useSettings } from "../lib/settings";
 
@@ -138,6 +139,7 @@ function KitCard({ kit, stats, folderName }: { kit: Kit; stats?: KitStats; folde
   const remove = async (e: React.MouseEvent) => {
     e.preventDefault();
     if (!confirm(`Delete "${kit.title}" and everything in it?`)) return;
+    cancelKitJobs(kit.id);
     await deleteKit(kit.id);
   };
   return (
