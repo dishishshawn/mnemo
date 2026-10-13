@@ -7,7 +7,7 @@
 import "fake-indexeddb/auto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { db } from "../src/lib/db";
+import { audioBlob, db } from "../src/lib/db";
 import { configureGemini, type UsageRecord } from "../src/lib/gemini";
 import { breakdown, costOf } from "../src/lib/pricing";
 import { DEFAULT_SETTINGS, type Settings } from "../src/lib/settings";
@@ -126,10 +126,11 @@ describe.skipIf(!key)("Gemini smoke test", () => {
     console.log(`  tutor: "${reply1.slice(0, 140)}…" / "${reply2.slice(0, 140)}…"`);
 
     const podcast = await generatePodcast(kitId, { onProgress: (d, t, s) => console.log(`  [podcast] ${s} ${d}/${t}`) });
-    console.log(`  podcast: ${podcast.durationSec}s audio, ${(podcast.audio!.size / 1024 / 1024).toFixed(1)} MB`);
+    const audio = new Uint8Array(await audioBlob(podcast.audio!).arrayBuffer());
+    console.log(`  podcast: ${podcast.durationSec}s audio, ${(audio.length / 1024 / 1024).toFixed(1)} MB`);
     expect(podcast.durationSec).toBeGreaterThan(60);
     mkdirSync("scratch", { recursive: true });
-    writeFileSync("scratch/smoke-podcast.wav", new Uint8Array(await podcast.audio!.arrayBuffer()));
+    writeFileSync("scratch/smoke-podcast.wav", audio);
 
     // Optional: SMOKE_YOUTUBE=<url> measures video tokens per minute at low media resolution.
     const yt = process.env.SMOKE_YOUTUBE;

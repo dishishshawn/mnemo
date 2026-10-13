@@ -1,7 +1,7 @@
 // UI walkthrough with Gemini mocked at the network layer. Drives every page, fails on any
 // console error, and saves screenshots to scratch/shots/. Needs a running server:
 //   npx vite preview --port 4173 &   then   node scripts/e2e.mjs [baseUrl]
-import { chromium } from "@playwright/test";
+import { chromium, webkit } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 
 const BASE = process.argv[2] ?? "http://localhost:4173/";
@@ -99,7 +99,8 @@ async function handleSync(route) {
   if (req.method() === "GET") {
     if (!cur) return route.fulfill({ status: 204 });
     const tags = { ETag: `W/${cur.etag}`, "X-Etag": cur.etag }; // like Vercel's CDN
-    if (h["if-none-match"]?.replace(/^W\//, "") === cur.etag) return route.fulfill({ status: 304, headers: tags });
+    // Playwright's WebKit can't fulfill a 304; a full 200 is equivalent for the client (merge is idempotent).
+    if (engine !== webkit && h["if-none-match"]?.replace(/^W\//, "") === cur.etag) return route.fulfill({ status: 304, headers: tags });
     return route.fulfill({ status: 200, body: cur.bytes, headers: { ...tags, "Content-Type": "application/octet-stream" } });
   }
   const isState = key.endsWith("/state");
@@ -111,12 +112,19 @@ async function handleSync(route) {
 }
 
 const errors = [];
-const browser = await chromium.launch();
+// E2E_ENGINE=webkit approximates iPhone/iPad Safari (also strips features iOS Safari lacks).
+const engine = process.env.E2E_ENGINE === "webkit" ? webkit : chromium;
+const browser = await engine.launch();
+const iosGaps = () => {
+  delete ReadableStream.prototype[Symbol.asyncIterator];
+  delete ReadableStream.prototype.values;
+};
 
 let current;
 async function run(name, viewport, colorScheme) {
-  const ctx = await browser.newContext({ viewport, colorScheme });
+  const ctx = await browser.newContext({ viewport, colorScheme, serviceWorkers: "block" });
   const page = await ctx.newPage();
+  if (engine === webkit) await page.addInitScript(iosGaps);
   current = { page, name };
   page.on("console", (m) => {
     if (m.type() === "error") errors.push(`[${name}] ${m.text()}`);
@@ -244,8 +252,9 @@ async function run(name, viewport, colorScheme) {
 }
 
 async function device(name, viewport) {
-  const ctx = await browser.newContext({ viewport });
+  const ctx = await browser.newContext({ viewport, serviceWorkers: "block" });
   const page = await ctx.newPage();
+  if (engine === webkit) await page.addInitScript(iosGaps);
   current = { page, name };
   page.on("console", (m) => m.type() === "error" && errors.push(`[${name}] ${m.text()}`));
   page.on("pageerror", (e) => errors.push(`[${name}] ${e.message}`));

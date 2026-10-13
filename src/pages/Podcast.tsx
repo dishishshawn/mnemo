@@ -2,7 +2,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { Download, Headphones, Trash } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Badge, Button, Card, Empty, ErrorBox, Field, inputClass, PageHeader, Progress, Spinner, MissingKit } from "../components/ui";
-import { db, type Output } from "../lib/db";
+import { audioBlob, db, type Output } from "../lib/db";
 import { download, slug, useKit } from "../lib/hooks";
 import { cancelJob, runJob, useJob } from "../lib/jobs";
 import type { PodcastScript } from "../lib/prompts";
@@ -90,7 +90,7 @@ export default function Podcast() {
 
 function Episode({ episode, kitTitle }: { episode: Output; kitTitle: string }) {
   const [showScript, setShowScript] = useState(false);
-  const url = useMemo(() => (episode.audio ? URL.createObjectURL(episode.audio) : undefined), [episode.audio]);
+  const url = useMemo(() => (episode.audio ? URL.createObjectURL(audioBlob(episode.audio)) : undefined), [episode.audio]);
   useEffect(() => () => {
     if (url) URL.revokeObjectURL(url);
   }, [url]);
@@ -108,7 +108,7 @@ function Episode({ episode, kitTitle }: { episode: Output; kitTitle: string }) {
         </div>
         <div className="flex gap-1">
           {episode.audio && (
-            <button onClick={() => download(episode.audio!, `${slug(kitTitle)}-podcast.wav`)} className="rounded-lg p-2 text-muted hover:text-brand-700" aria-label="Download">
+            <button onClick={() => download(audioBlob(episode.audio!), `${slug(kitTitle)}-podcast.wav`)} className="rounded-lg p-2 text-muted hover:text-brand-700" aria-label="Download">
               <Download className="size-4" />
             </button>
           )}

@@ -1,6 +1,6 @@
 import { blobToBase64 } from "./extract";
 import { base64ToBytes } from "./gemini";
-import { db, KIT_TABLES, type Output } from "./db";
+import { audioBlob, db, KIT_TABLES, type Output } from "./db";
 import { reviveCard } from "./srs";
 
 const TABLES = ["folders", "kits", ...KIT_TABLES, "usage"] as const;
@@ -21,7 +21,7 @@ export async function exportAll(includeAudio: boolean): Promise<Blob> {
       rows = await Promise.all(
         (rows as Output[]).map(async (o) => {
           const { audio, ...rest } = o;
-          return includeAudio && audio ? { ...rest, audioBase64: await blobToBase64(audio) } : rest;
+          return includeAudio && audio ? { ...rest, audioBase64: await blobToBase64(audioBlob(audio)) } : rest;
         }),
       );
     }
@@ -43,7 +43,8 @@ export async function importAll(file: File): Promise<number> {
         const r = { ...row };
         if (r.srs) r.srs = reviveCard(r.srs as Parameters<typeof reviveCard>[0]);
         if (typeof r.audioBase64 === "string") {
-          r.audio = new Blob([base64ToBytes(r.audioBase64) as BlobPart], { type: "audio/wav" });
+          const bytes = base64ToBytes(r.audioBase64);
+          r.audio = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
           delete r.audioBase64;
         }
         return r;

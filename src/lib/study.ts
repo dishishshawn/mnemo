@@ -521,7 +521,9 @@ async function recordPodcast(kitId: string, script: PodcastScript, opts: { signa
   };
   await Promise.all([worker(), worker()]);
   const wav = pcmToWav(pcm, sampleRate);
-  return { audio: new Blob([wav as BlobPart], { type: "audio/wav" }), durationSec: Math.round(pcmSeconds(wav.length - 44, sampleRate)) };
+  // An ArrayBuffer, not a Blob: Safari's IndexedDB can refuse to store Blobs.
+  const audio = wav.buffer.slice(wav.byteOffset, wav.byteOffset + wav.byteLength) as ArrayBuffer;
+  return { audio, durationSec: Math.round(pcmSeconds(wav.length - 44, sampleRate)) };
 }
 
 /** Records audio on this device for an episode whose audio lives on another device. */

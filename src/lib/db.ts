@@ -121,7 +121,11 @@ export interface Output {
   title: string;
   /** Markdown for guide/summary, JSON-encoded script for podcast. */
   content: string;
-  audio?: Blob;
+  /**
+   * WAV bytes. Stored as an ArrayBuffer: Safari's IndexedDB can refuse Blobs ("Error preparing
+   * Blob/File data to be stored in object store"). Older rows may still hold a Blob.
+   */
+  audio?: ArrayBuffer | Blob;
   durationSec?: number;
   createdAt: number;
 }
@@ -208,6 +212,11 @@ db.version(2).stores({
 });
 
 export const newId = () => crypto.randomUUID();
+
+/** Podcast audio as a playable/downloadable Blob, whichever form it was stored in. */
+export function audioBlob(audio: ArrayBuffer | Blob): Blob {
+  return audio instanceof Blob ? audio : new Blob([audio], { type: "audio/wav" });
+}
 
 export const KIT_TABLES = [
   "sources",
