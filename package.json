@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@google/genai": "^2.29.1",
+    "@vercel/blob": "^2.8.1",
     "clsx": "^2.1.1",
     "dexie": "^4.4.6",
     "dexie-react-hooks": "^4.4.0",

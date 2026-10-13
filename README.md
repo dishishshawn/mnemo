@@ -32,7 +32,8 @@ another device or keep a copy.
 
 ## Cost
 
-Free on a free-tier Gemini key, or roughly **$2–12/month** with billing enabled for daily use.
+Free on a free-tier Gemini key, or roughly **$1.50–9/month** with billing enabled for daily use
+(a live run of every feature once cost $0.17).
 **Settings → API spending** tracks actual spend per feature from Gemini's own token counts. The
 full breakdown is in [docs/COSTS.md](docs/COSTS.md).
 

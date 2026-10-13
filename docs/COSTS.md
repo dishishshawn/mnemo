@@ -1,11 +1,34 @@
 # What Mnemo costs to run
 
-Short answer: **$0 on a free Gemini key, or about $2–12 a month with billing enabled for one
+Short answer: **$0 on a free Gemini key, or about $1.50–9 a month with billing enabled for one
 student studying every day** (roughly double that from January 2027, when Google's Flash prices go up). Hosting is free (GitHub Pages). For comparison, Thea+ is listed at
 $12/month or $48/year in the App Store.
 
 The app shows real spending under **Settings → API spending**, computed from the token counts
 Gemini returns on every call. The numbers below are the estimate behind those defaults.
+
+## Measured (live run, 2026-10-13)
+
+`just smoke` runs every feature once against the real API on a ~4.3k-token lecture text
+(Wikipedia's "Cellular respiration"). At the default "low" thinking level, Gemini 3.8 Flash used
+**0 thinking tokens** on every call, and its implicit cache served ~2k tokens on repeat calls.
+
+| Call                              | Tokens in / out        | Cost      |
+| --------------------------------- | ---------------------- | --------- |
+| Map concepts                      | 3.8k (2k cached) / 0.5k | $0.0033  |
+| 24 flashcards                     | 3.9k / 1.8k            | $0.0098   |
+| 8 Smart Study questions           | 4.0k / 1.6k            | $0.0091   |
+| Grade a short answer (Flash-Lite) | 0.4k / 0.1k            | $0.0003   |
+| 15-question practice test         | 4.1k / 3.4k            | $0.0156   |
+| Study guide (20k chars)           | 4.0k / 5.1k            | $0.0222   |
+| Summary                           | 3.9k / 1.2k            | $0.0073   |
+| Tutor message                     | 4.0k / 0.1k            | $0.0034   |
+| Podcast script                    | 3.9k / 2.7k            | $0.0118   |
+| Podcast audio, 9.3 min            | 1.7k / 13.9k audio     | $0.0854   |
+| **Everything once**               | 16 calls               | **$0.17** (2027: $0.34) |
+
+Output dominates, so a bigger kit mostly raises input cost: a 15k-token kit adds about $0.008
+per call at current prices.
 
 ## Prices used (paid tier, per 1M tokens, checked 2026-10-13)
 
@@ -24,7 +47,7 @@ Source: <https://ai.google.dev/gemini-api/docs/pricing>
 ## Per feature
 
 Assumes a kit with ~15k tokens of material (a 40-slide lecture plus notes, or a textbook chapter).
-Thinking tokens (~1k per call at "low") are billed as output and included.
+These estimates assume ~1k thinking tokens per call; the live run measured 0, so they run high.
 
 | Action                                    | Approx. tokens (in / out)    | Cost now | From 2027 |
 | ----------------------------------------- | ---------------------------- | -------- | --------- |
@@ -45,10 +68,11 @@ Thinking tokens (~1k per call at "low") are billed as output and included.
 
 | Usage                                                                                                  | Now     | From 2027 |
 | ------------------------------------------------------------------------------------------------------ | ------- | --------- |
-| **Light**: 6 kits, 15 Smart Study questions/day, 2 tests, 3 guides, 2 podcasts                         | ~$2     | ~$4.50    |
-| **Heavy**: 15 kits, 60 questions/day, 8 tests, 15 guides + summaries, 8 podcasts, 8 h of lecture video, 150 tutor messages | ~$12    | ~$23      |
+| **Light**: 6 kits, 15 Smart Study questions/day, 2 tests, 3 guides, 2 podcasts                         | ~$1.50  | ~$3       |
+| **Heavy**: 15 kits, 60 questions/day, 8 tests, 15 guides + summaries, 8 podcasts, 8 h of lecture video, 150 tutor messages | ~$9     | ~$17      |
 
-In the heavy month, Smart Study is about half the bill ($6.50) and tutor chat is next ($2.25). That's
+Recomputed with the measured token counts (15k-token kits, no thinking). In the heavy month, Smart Study is the
+biggest line (~$4) and tutor chat is next (~$1.70). That's
 also why Thea caps free daily questions. Cache hits on the material typically shave 20–30% off.
 
 ## Free tier

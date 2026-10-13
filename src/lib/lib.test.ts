@@ -6,7 +6,7 @@ import type { Concept, Question } from "./db";
 import { newCard, review, Rating } from "./srs";
 import { pcmToWav } from "./wav";
 import { decodeAudio, parseJson } from "./gemini";
-import { chunkScript } from "./study";
+import { chunkScript, fitScript } from "./study";
 import { stripFence } from "./ingest";
 import { youtubeId } from "./extract";
 
@@ -215,5 +215,23 @@ describe("usage projection", () => {
     // 6 hours into October (31 days), $0.10 spent -> $0.40/day pace -> $12.40.
     const now = new Date(2026, 9, 1, 6, 0, 0);
     expect(projectMonth(0.1, now)).toBeCloseTo(12.4, 1);
+  });
+});
+
+describe("podcast length", () => {
+  const line = (i: number, words = 20) => ({ speaker: (i % 2 ? "B" : "A") as "A" | "B", text: `w${i} `.repeat(words).trim() });
+
+  it("leaves scripts within budget alone", () => {
+    const lines = Array.from({ length: 10 }, (_, i) => line(i));
+    expect(fitScript(lines, 450)).toEqual(lines);
+  });
+
+  it("trims an overlong script to ~budget, keeping the opening and the recap", () => {
+    const lines = Array.from({ length: 100 }, (_, i) => line(i)); // 2,000 words
+    const out = fitScript(lines, 450);
+    const words = out.reduce((n, l) => n + l.text.split(" ").length, 0);
+    expect(words).toBeLessThanOrEqual(450 * 1.15);
+    expect(out[0]).toBe(lines[0]);
+    expect(out.slice(-6)).toEqual(lines.slice(-6));
   });
 });

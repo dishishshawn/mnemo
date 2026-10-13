@@ -12,6 +12,7 @@ import {
   gradeTask,
   guideTask,
   podcastSchema,
+  PODCAST_WPM,
   podcastTask,
   questionSchema,
   questionTask,
@@ -406,6 +407,28 @@ export async function generateDocument(kitId: string, type: "guide" | "summary",
 
 export const HOSTS: [string, string] = ["Alex", "Sam"];
 
+const wordCount = (s: string) => s.split(/\s+/).filter(Boolean).length;
+
+/**
+ * Trims a script to ~15% over the word budget, keeping the opening and the closing recap
+ * (the last `tail` lines) and dropping lines from the middle-to-end of the main body.
+ */
+export function fitScript(lines: PodcastScript["lines"], targetWords: number, tail = 6): PodcastScript["lines"] {
+  const budget = targetWords * 1.15;
+  const total = lines.reduce((n, l) => n + wordCount(l.text), 0);
+  if (total <= budget || lines.length <= tail + 2) return lines;
+  const ending = lines.slice(-tail);
+  let used = ending.reduce((n, l) => n + wordCount(l.text), 0);
+  const body: PodcastScript["lines"] = [];
+  for (const line of lines.slice(0, -tail)) {
+    const w = wordCount(line.text);
+    if (used + w > budget && body.length >= 2) break;
+    body.push(line);
+    used += w;
+  }
+  return [...body, ...ending];
+}
+
 /** Splits a script into TTS-sized chunks (~2 minutes of speech each), on turn boundaries. */
 export function chunkScript(lines: PodcastScript["lines"], maxChars = 1800): PodcastScript["lines"][] {
   const chunks: PodcastScript["lines"][] = [];
@@ -444,7 +467,12 @@ export async function generatePodcast(
     ),
     schema: podcastSchema,
   });
-  const chunks = chunkScript(script.lines.filter((l) => l.text.trim()));
+  // Models overshoot length targets; trim so an "8-minute" episode can't become 25 minutes (and 3x the cost).
+  script.lines = fitScript(
+    script.lines.filter((l) => l.text.trim()),
+    settings.podcastMinutes * PODCAST_WPM,
+  );
+  const chunks = chunkScript(script.lines);
   const pcm: Uint8Array[] = new Array(chunks.length);
   let sampleRate = 24000;
   let done = 0;

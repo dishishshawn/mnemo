@@ -293,13 +293,18 @@ export interface PodcastScript {
   lines: { speaker: "A" | "B"; text: string }[];
 }
 
+/** Gemini TTS speaks ~150 words a minute; a line averages ~17 words. */
+export const PODCAST_WPM = 150;
+
 export function podcastTask(opts: { language: string; minutes: number; hostA: string; hostB: string; focus?: string }): string {
-  const words = Math.round(opts.minutes * 150);
-  return `Task: write a two-host study podcast script about this material, about ${words} words in total (${opts.minutes} minutes spoken).
+  const words = Math.round(opts.minutes * PODCAST_WPM);
+  const lines = Math.max(8, Math.round(words / 17));
+  return `Task: write a two-host study podcast script about this material for a ${opts.minutes}-minute episode.
+LENGTH IS A HARD LIMIT: exactly ${lines} lines and at most ${words} words in total. Each line is 1 to 3 short sentences. Cover the most important ideas only; leave the rest out rather than running long.
 - Host A (${opts.hostA}) is the expert who explains; Host B (${opts.hostB}) is a sharp fellow student who asks the questions a learner would ask, makes connections, and occasionally gets something slightly wrong so A can correct it.
-- Open with a one-line hook, then walk through the most important ideas in a logical order, using concrete examples and analogies. Keep it accurate to the material.
+- Open with a one-line hook, then walk through the key ideas in a logical order, using concrete examples and analogies. Keep it accurate to the material.
 - Natural spoken language: short sentences, contractions, light humour. No stage directions, sound effects, Markdown, or LaTeX; say formulas in words.
-- End with a 3-question rapid-fire recap where B asks and A answers.
+- The last 6 lines are a 3-question rapid-fire recap where B asks and A answers.
 ${opts.focus ? `- Focus on: ${opts.focus}\n` : ""}${languageLine(opts.language)}`;
 }
 
