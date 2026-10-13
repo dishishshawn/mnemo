@@ -87,6 +87,28 @@ async function handle(route) {
   return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(response) });
 }
 
+// In-memory stand-in for /api/sync (same semantics as api/sync.ts). Skipped with E2E_REAL_SYNC=1.
+const syncStore = new Map();
+let syncSeq = 0;
+async function handleSync(route) {
+  const req = route.request();
+  const url = new URL(req.url());
+  const key = `${url.searchParams.get("vault")}/${url.searchParams.get("name")}`;
+  const cur = syncStore.get(key);
+  const h = req.headers();
+  if (req.method() === "GET") {
+    if (!cur) return route.fulfill({ status: 204 });
+    if (h["if-none-match"] === cur.etag) return route.fulfill({ status: 304, headers: { ETag: cur.etag } });
+    return route.fulfill({ status: 200, body: cur.bytes, headers: { ETag: cur.etag, "Content-Type": "application/octet-stream" } });
+  }
+  const isState = key.endsWith("/state");
+  const ifMatch = h["if-match"];
+  if (isState && ((ifMatch && cur?.etag !== ifMatch) || (!ifMatch && cur))) return route.fulfill({ status: 412, json: {} });
+  const etag = `"s${++syncSeq}"`;
+  syncStore.set(key, { bytes: req.postDataBuffer(), etag });
+  return route.fulfill({ status: 200, json: { etag } });
+}
+
 const errors = [];
 const browser = await chromium.launch();
 
@@ -220,9 +242,73 @@ async function run(name, viewport, colorScheme) {
   await ctx.close();
 }
 
+async function device(name, viewport) {
+  const ctx = await browser.newContext({ viewport });
+  const page = await ctx.newPage();
+  current = { page, name };
+  page.on("console", (m) => m.type() === "error" && errors.push(`[${name}] ${m.text()}`));
+  page.on("pageerror", (e) => errors.push(`[${name}] ${e.message}`));
+  await page.route(/generativelanguage\.googleapis\.com/, handle);
+  if (!process.env.E2E_REAL_SYNC) await page.route(/\/api\/sync/, handleSync);
+  return { ctx, page };
+}
+
+/** Two devices: A builds a kit and turns on sync; B joins with the code and gets everything. */
+async function runSync() {
+  const a = await device("sync-A", { width: 1280, height: 860 });
+  await a.page.goto(`${BASE}#/settings`);
+  await a.page.getByPlaceholder("AIza…").fill("AIzaSYNC-TEST-KEY");
+  await a.page.goto(`${BASE}#/new`);
+  await a.page.getByRole("button", { name: "Paste notes" }).click();
+  await a.page.getByPlaceholder(/Paste lecture notes/).fill("Photosynthesis turns light into sugar.\n".repeat(30));
+  await a.page.getByRole("button", { name: "Add notes" }).click();
+  await a.page.getByRole("button", { name: "Build study kit" }).click();
+  await a.page.getByRole("heading", { name: "Cellular Respiration" }).waitFor({ timeout: 20000 });
+  await a.page.getByText("12 flashcards").waitFor({ timeout: 20000 });
+  await a.page.goto(`${BASE}#/settings`);
+  await a.page.getByRole("button", { name: "Turn on sync (first device)" }).click();
+  await a.page.getByText(/Synced (just now|\d+s ago)/).waitFor({ timeout: 20000 });
+  await a.page.getByRole("button", { name: "Show code" }).click();
+  const code = (await a.page.locator("code").first().textContent()).trim();
+  if (!/^[0-9A-Z]{5}(-[0-9A-Z]{5}){3}$/.test(code)) throw new Error(`Unexpected sync code: ${code}`);
+  await a.page.screenshot({ path: `${SHOTS}/sync-A-settings.png`, fullPage: true });
+
+  const b = await device("sync-B", { width: 390, height: 844 });
+  await b.page.goto(`${BASE}#/settings`);
+  await b.page.getByRole("button", { name: "I have a sync code" }).click();
+  await b.page.getByPlaceholder("XXXXX-XXXXX-XXXXX-XXXXX").fill(code.toLowerCase());
+  await b.page.getByRole("button", { name: "Join" }).click();
+  await b.page.getByText(/Synced (just now|\d+s ago)/).waitFor({ timeout: 20000 });
+  if ((await b.page.getByPlaceholder("AIza…").inputValue()) !== "AIzaSYNC-TEST-KEY") throw new Error("API key didn't sync");
+  await b.page.goto(BASE);
+  await b.page.getByText("Cellular Respiration").click();
+  await b.page.getByText("12 flashcards").waitFor({ timeout: 10000 });
+  await b.page.goto(`${b.page.url()}/sources`);
+  await b.page.getByText(/tokens · read by pasted/).waitFor({ timeout: 10000 });
+  await b.page.screenshot({ path: `${SHOTS}/sync-B-kit-sources.png`, fullPage: true });
+
+  // B deletes a card; A picks the deletion up on its next sync.
+  await b.page.goto(`${b.page.url().replace(/\/sources$/, "")}/cards`);
+  await b.page.getByRole("button", { name: "All cards" }).click();
+  await b.page.getByRole("button", { name: "Delete" }).first().click();
+  await b.page.goto(`${BASE}#/settings`);
+  await b.page.getByRole("button", { name: /Sync now/ }).click();
+  await b.page.getByText(/Synced (just now|\d+s ago)/).waitFor({ timeout: 20000 });
+  await a.page.getByRole("button", { name: /Sync now/ }).click();
+  await a.page.waitForTimeout(1500);
+  await a.page.goto(BASE);
+  await a.page.getByText("Cellular Respiration").click();
+  await a.page.getByText("11 flashcards").waitFor({ timeout: 10000 });
+  await a.ctx.close();
+  await b.ctx.close();
+}
+
 try {
-  await run("mobile", { width: 390, height: 844 }, "light");
-  await run("desktop-dark", { width: 1280, height: 860 }, "dark");
+  if (process.env.E2E_ONLY !== "sync") {
+    await run("mobile", { width: 390, height: 844 }, "light");
+    await run("desktop-dark", { width: 1280, height: 860 }, "dark");
+  }
+  await runSync();
 } catch (err) {
   console.error("E2E FAILED:", err.message);
   await current?.page.screenshot({ path: `${SHOTS}/${current.name}-FAILED.png`, fullPage: true }).catch(() => {});

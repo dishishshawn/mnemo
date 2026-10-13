@@ -1,12 +1,13 @@
 import clsx from "clsx";
 import { useLiveQuery } from "dexie-react-hooks";
-import { BookOpen, Plus, Settings as SettingsIcon } from "lucide-react";
+import { BookOpen, CloudAlert, CloudCheck, Plus, RefreshCw, Settings as SettingsIcon } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 import { Link, NavLink } from "react-router";
 import { db } from "../lib/db";
 import { formatUsd } from "../lib/pricing";
 import { useSettings } from "../lib/settings";
 import { monthStart } from "../lib/usage";
+import { useSyncStatus } from "../lib/sync";
 
 function useTheme() {
   const { theme } = useSettings();
@@ -21,6 +22,7 @@ function useTheme() {
 
 export function Layout({ children }: { children: ReactNode }) {
   useTheme();
+  const sync = useSyncStatus();
   const spent = useLiveQuery(async () => {
     const rows = await db.usage.where("at").aboveOrEqual(monthStart()).toArray();
     return rows.reduce((n, r) => n + r.costUsd, 0);
@@ -50,6 +52,17 @@ export function Layout({ children }: { children: ReactNode }) {
               <span className="hidden sm:inline">New kit</span>
             </NavLink>
           </nav>
+          {sync.enabled && (
+            <NavLink to="/settings" className="rounded-lg p-2 text-muted hover:text-[var(--text)]" title={sync.phase === "error" ? `Sync problem: ${sync.error}` : sync.phase === "syncing" ? "Syncing" : "Synced"}>
+              {sync.phase === "syncing" ? (
+                <RefreshCw className="size-4 animate-spin" />
+              ) : sync.phase === "error" ? (
+                <CloudAlert className="size-4 text-rose-600" />
+              ) : (
+                <CloudCheck className="size-4" />
+              )}
+            </NavLink>
+          )}
           <NavLink to="/settings" className={navItem} title="Settings and API usage">
             <span className="tabular-nums">{formatUsd(spent ?? 0)}</span>
             <SettingsIcon className="size-4" />

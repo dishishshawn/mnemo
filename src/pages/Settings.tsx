@@ -10,13 +10,16 @@ import { findModel, formatUsd, MODELS, ratesAt } from "../lib/pricing";
 import { TTS_VOICES, updateSettings, useSettings, type Settings as S, type ThinkingLevel } from "../lib/settings";
 import { monthStart, projectMonth, summarize, taskLabel } from "../lib/usage";
 import { Stat } from "./Progress";
+import { SyncCard } from "../components/SyncCard";
+import { disableSync } from "../lib/sync";
 
 export default function Settings() {
   const s = useSettings();
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      <PageHeader title="Settings" subtitle="Everything is stored in this browser only." />
+      <PageHeader title="Settings" subtitle="Stored on this device, and on your other devices if sync is on." />
       <ApiKey />
+      <SyncCard />
       <Usage />
       <Models s={s} />
       <Card className="space-y-4 p-5">
@@ -277,7 +280,8 @@ function Backup() {
   };
 
   const wipe = async () => {
-    if (!confirm("Delete ALL kits, progress and usage history from this browser? This can't be undone.")) return;
+    if (!confirm("Delete ALL kits, progress and usage history from this device? Synced devices keep their copy, and sync is turned off here.")) return;
+    disableSync();
     await db.delete();
     location.reload();
   };

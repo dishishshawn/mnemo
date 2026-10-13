@@ -7,7 +7,7 @@ import { download, slug, useKit } from "../lib/hooks";
 import { cancelJob, runJob, useJob } from "../lib/jobs";
 import type { PodcastScript } from "../lib/prompts";
 import { updateSettings, useSettings } from "../lib/settings";
-import { generatePodcast, HOSTS } from "../lib/study";
+import { generatePodcast, HOSTS, recordPodcastHere } from "../lib/study";
 import { findModel, ratesAt } from "../lib/pricing";
 
 export default function Podcast() {
@@ -117,7 +117,7 @@ function Episode({ episode, kitTitle }: { episode: Output; kitTitle: string }) {
           </button>
         </div>
       </div>
-      {url && <audio controls src={url} className="w-full" preload="metadata" />}
+      {url ? <audio controls src={url} className="w-full" preload="metadata" /> : <RecordHere episodeId={episode.id} />}
       <button onClick={() => setShowScript((s) => !s)} className="text-sm text-brand-700 hover:underline dark:text-brand-300">
         {showScript ? "Hide transcript" : "Show transcript"}
       </button>
@@ -131,5 +131,31 @@ function Episode({ episode, kitTitle }: { episode: Output; kitTitle: string }) {
         </div>
       )}
     </Card>
+  );
+}
+
+/** Shown for episodes synced from another device: audio is too big to sync, so voice it here. */
+function RecordHere({ episodeId }: { episodeId: string }) {
+  const job = useJob(`record:${episodeId}`);
+  const busy = !!job && !job.done;
+  const record = () =>
+    runJob(`record:${episodeId}`, async ({ signal, report }) => {
+      await recordPodcastHere(episodeId, { signal, onProgress: (d, t) => report(`Recording audio (${d}/${t})`, t ? d / t : 0) });
+    });
+  return (
+    <div className="space-y-2 rounded-xl surface-2 p-3 text-sm">
+      <p className="text-muted">The audio for this episode is on the device that made it.</p>
+      {busy ? (
+        <>
+          <Spinner label={job.status} />
+          <Progress value={job.progress ?? 0} />
+        </>
+      ) : (
+        <Button size="sm" variant="secondary" onClick={record}>
+          Record it on this device (~$0.08)
+        </Button>
+      )}
+      {job?.error && <ErrorBox error={job.error} onRetry={record} />}
+    </div>
   );
 }

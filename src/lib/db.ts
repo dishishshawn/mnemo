@@ -155,6 +155,14 @@ export interface UsageEntry {
   costUsd: number;
 }
 
+/** Records a deletion so it can propagate to other devices through sync. */
+export interface Tombstone {
+  id: string; // "<table>:<key>"
+  table: string;
+  key: string;
+  at: number;
+}
+
 export interface GameScore {
   id: string;
   kitId: string;
@@ -176,6 +184,7 @@ export const db = new Dexie("mnemo") as Dexie & {
   chats: EntityTable<Chat, "id">;
   usage: EntityTable<UsageEntry, "id">;
   scores: EntityTable<GameScore, "id">;
+  tombstones: EntityTable<Tombstone, "id">;
 };
 
 db.version(1).stores({
@@ -193,6 +202,11 @@ db.version(1).stores({
   scores: "id, kitId, [kitId+game]",
 });
 
+// v2: sync. Synced rows also carry `_ts` (last local edit, ms), set by hooks in sync.ts.
+db.version(2).stores({
+  tombstones: "id, at",
+});
+
 export const newId = () => crypto.randomUUID();
 
 export const KIT_TABLES = [
@@ -206,6 +220,10 @@ export const KIT_TABLES = [
   "chats",
   "scores",
 ] as const;
+
+/** Tables that sync across devices (everything except tombstones themselves). */
+export const SYNC_TABLES = ["folders", "kits", ...KIT_TABLES, "usage"] as const;
+export type SyncTable = (typeof SYNC_TABLES)[number];
 
 export async function deleteKit(kitId: string): Promise<void> {
   await db.transaction("rw", [db.kits, ...KIT_TABLES.map((t) => db[t])], async () => {

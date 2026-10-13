@@ -472,6 +472,27 @@ export async function generatePodcast(
     script.lines.filter((l) => l.text.trim()),
     settings.podcastMinutes * PODCAST_WPM,
   );
+  const { audio, durationSec } = await recordPodcast(kitId, script, opts);
+  const output: Output = {
+    id: newId(),
+    kitId,
+    type: "podcast",
+    title: script.title,
+    content: JSON.stringify(script),
+    audio,
+    durationSec,
+    createdAt: Date.now(),
+  };
+  await kitOrThrow(kitId);
+  await db.outputs.add(output);
+  return output;
+}
+
+type Progress = (done: number, total: number, stage: string) => void;
+
+/** Turns a script into audio. Separate so a device that got the script via sync can record it locally. */
+async function recordPodcast(kitId: string, script: PodcastScript, opts: { signal?: AbortSignal; onProgress?: Progress }) {
+  const settings = getSettings();
   const chunks = chunkScript(script.lines);
   const pcm: Uint8Array[] = new Array(chunks.length);
   let sampleRate = 24000;
@@ -500,19 +521,15 @@ export async function generatePodcast(
   };
   await Promise.all([worker(), worker()]);
   const wav = pcmToWav(pcm, sampleRate);
-  const output: Output = {
-    id: newId(),
-    kitId,
-    type: "podcast",
-    title: script.title,
-    content: JSON.stringify(script),
-    audio: new Blob([wav as BlobPart], { type: "audio/wav" }),
-    durationSec: Math.round(pcmSeconds(wav.length - 44, sampleRate)),
-    createdAt: Date.now(),
-  };
-  await kitOrThrow(kitId);
-  await db.outputs.add(output);
-  return output;
+  return { audio: new Blob([wav as BlobPart], { type: "audio/wav" }), durationSec: Math.round(pcmSeconds(wav.length - 44, sampleRate)) };
+}
+
+/** Records audio on this device for an episode whose audio lives on another device. */
+export async function recordPodcastHere(outputId: string, opts: { signal?: AbortSignal; onProgress?: Progress } = {}) {
+  const output = await db.outputs.get(outputId);
+  if (!output) throw new Error("Episode not found.");
+  const { audio, durationSec } = await recordPodcast(output.kitId, JSON.parse(output.content) as PodcastScript, opts);
+  await db.outputs.update(outputId, { audio, durationSec });
 }
 
 // ---------- Tutor ----------

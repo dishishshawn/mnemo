@@ -4,6 +4,7 @@ import { HashRouter, Route, Routes, useLocation } from "react-router";
 import "./index.css";
 import { Layout } from "./components/Layout";
 import { installUsageTracking } from "./lib/usage";
+import { installChangeTracking, startSyncLoop } from "./lib/sync";
 import { db } from "./lib/db";
 import { Spinner } from "./components/ui";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -22,6 +23,8 @@ const ProgressPage = lazy(() => import("./pages/Progress"));
 const Sources = lazy(() => import("./pages/Sources"));
 const Settings = lazy(() => import("./pages/Settings"));
 
+// Before any database write, so every change is stamped for sync.
+installChangeTracking();
 installUsageTracking();
 
 // Ask the browser not to evict the study data under storage pressure.
@@ -41,6 +44,8 @@ function RouteBoundary({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
   return <ErrorBoundary key={pathname}>{children}</ErrorBoundary>;
 }
+
+startSyncLoop();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

@@ -28,6 +28,8 @@ export default defineConfig({
       workbox: {
         globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
+        // The sync API must always hit the network.
+        navigateFallbackDenylist: [/^\/api\//],
       },
     }),
   ],
