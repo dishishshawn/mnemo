@@ -23,6 +23,8 @@ export interface Kit {
   createdAt: number;
   updatedAt: number;
   lastStudiedAt?: number;
+  /** Local date "YYYY-MM-DD". Drives the daily quota and the exam-day forecast (plan.ts). */
+  examDate?: string;
 }
 
 export interface Source {
@@ -95,9 +97,10 @@ export interface Question {
 export interface Attempt {
   id: string;
   kitId: string;
+  /** For "explain" attempts: "explain:<conceptId>" (there is no question). */
   questionId: string;
   concept: string;
-  mode: "smart" | "test";
+  mode: "smart" | "test" | "explain";
   response: string;
   /** 0..1 */
   score: number;
@@ -216,6 +219,25 @@ db.version(1).stores({
 db.version(2).stores({
   tombstones: "id, at",
 });
+
+// v3: multiple-choice options used to be stored in the model's order, which put the answer first.
+db.version(3)
+  .stores({})
+  .upgrade((tx) =>
+    tx
+      .table("questions")
+      .toCollection()
+      .modify((q: Question) => {
+        if (q.type !== "mcq" || q.options.length < 2) return;
+        const order = q.options.map((_, i) => i);
+        for (let i = order.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [order[i], order[j]] = [order[j], order[i]];
+        }
+        q.options = order.map((i) => q.options[i]);
+        q.answerIndex = order.indexOf(q.answerIndex);
+      }),
+  );
 
 export const newId = () => crypto.randomUUID();
 

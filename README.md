@@ -3,15 +3,23 @@
 A personal AI study app. Drop in course material (slides, PDFs, photos of notes, lecture
 recordings, YouTube links) and Mnemo turns it into a study kit:
 
-- **Smart Study**: adaptive questions that target your weakest concepts and get harder as you
-  improve. When you get one wrong, it nudges you with a hint before showing the answer. You can
-  steer it ("focus on chapter 3", "harder questions").
+- **Smart Study**: adaptive multiple-choice and true/false questions that target your weakest
+  concepts and get harder as you improve. When you get one wrong, it nudges you with a hint before
+  showing the answer. You can steer it ("focus on chapter 3", "harder questions").
+- **Short answers**: the same adaptive engine, but written answers graded by AI, in their own
+  section so they don't interrupt a quick multiple-choice session.
 - **Flashcards** with FSRS spaced repetition, plus editing and AI top-ups.
 - **Practice tests**: exam-style, optionally timed, with short answers graded by AI.
 - **Study guides and summaries** you can print to PDF or download as Markdown.
 - **Podcasts**: two hosts talk through your material, generated with Gemini TTS.
 - **Games**: Definition Match, Term Builder and Stacker, built from your flashcards.
+- **Explain it back**: teach a concept out loud from memory (your keyboard's dictation, so it's
+  free). Mnemo checks it against the material and lists what you covered, skipped, or got wrong.
 - **Tutor**: chat about the material, Socratic by default.
+- **Exam date and daily quota**: set the exam date and Mnemo works out, from the spaced-repetition
+  state of every concept, how many questions a day keep you above 90% recall on exam day. The
+  kit shows today's quota and whether you're on pace; Progress shows the forgetting curve from
+  today to the exam and the concepts most at risk. All computed on the device, no API calls.
 - **Progress**: mastery per concept, streaks, test history.
 - **Sync** across phone, tablet and laptop with a sync code, end-to-end encrypted.
 - Any of 60+ languages per kit, folders, light/dark mode, installable as a phone app (PWA).
@@ -69,11 +77,33 @@ file / link / notes ──► ingest once ──► Markdown text (IndexedDB)
 | `src/lib/ingest.ts`      | Turning sources into text                              |
 | `src/lib/study.ts`       | Kit building and each generator                        |
 | `src/lib/smart.ts`       | Adaptive question selection and mastery                |
+| `src/lib/plan.ts`        | Exam-date planning: daily quota, exam-day forecast     |
 | `src/lib/pricing.ts`     | Price table and per-call cost                          |
 | `src/lib/sync.ts`        | Change tracking, merge, and the sync loop              |
 | `src/lib/crypto.ts`      | Sync code, key derivation, encryption                  |
 | `api/sync.ts`            | The sync endpoint (Vercel Function + Blob)             |
 | `src/pages/`             | One file per screen                                    |
+
+## Future additions
+
+Ideas that fit the "learning data, not more API calls" direction, in rough order:
+
+- **Confidence calibration.** Occasionally (never every question: only on concepts that look
+  strong, at most one in five, never twice on a concept in a session) ask "how sure are you?"
+  before revealing the answer. Plot stated confidence against actual accuracy and surface the
+  concepts she is confidently wrong about.
+- **Study reminders.** A browser can't schedule a notification for tomorrow on its own, so this
+  needs Web Push: the device would store its push subscription, a nudge time and a pre-written
+  one-line message ("12 due, exam in 9 days") next to its encrypted blob, and a daily cron would
+  forward it. The plan itself stays on the device. A calendar export (`.ics` with alarms) of the
+  daily quota is the zero-server alternative.
+- **Fatigue detection.** Accuracy and hint use over the minutes of a session, against her own
+  baseline, with a "you're past your peak, stop here" nudge. Time-of-day accuracy across sessions.
+- **Honest streaks.** Count a day only when the due reviews got done, with one freeze a week.
+- **Error-driven cram sheet.** The night before, a one-pager built only from the concepts with
+  the lowest predicted exam-day recall.
+- **"Why this question".** One line under each Smart Study question: due for review, weak, or
+  new material being interleaved.
 
 ## Development
 

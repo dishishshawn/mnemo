@@ -255,6 +255,45 @@ Feedback style: ${
   return `${body}\n\nGrade every item. ${languageLine(language)}`;
 }
 
+// ---------- Explain it back (teach-back): the student explains a concept aloud ----------
+
+export const explainSchema = {
+  type: "object",
+  properties: {
+    score: { type: "number", description: "0 to 1: how completely and correctly the concept was explained" },
+    covered: { type: "array", items: { type: "string" }, description: "Essential points the student got right, each a short phrase" },
+    missing: { type: "array", items: { type: "string" }, description: "Essential points the student left out, each a short phrase" },
+    errors: { type: "array", items: { type: "string" }, description: "Things the student said that are wrong, each with the correction, one sentence" },
+    tip: { type: "string", description: "One or two sentences: the single most useful thing to fix or add next time" },
+  },
+  required: ["score", "covered", "missing", "errors", "tip"],
+};
+
+export interface ExplainResult {
+  score: number;
+  covered: string[];
+  missing: string[];
+  errors: string[];
+  tip: string;
+}
+
+export const EXPLAIN_SYSTEM = `You assess a student explaining a concept in their own words, as if teaching it to a friend, against the course material given inside <material> tags.
+- The explanation was spoken and transcribed: ignore filler words, repetition, punctuation and transcription slips. Judge the ideas.
+- First decide the 3 to 6 essential points the material makes about the concept. Then sort each into covered or missing. Only list a point as missing if the material actually teaches it.
+- An error is a claim that contradicts the material. Vague or incomplete is not an error.
+- Score: 1 = every essential point, nothing wrong. 0.7 = most points, nothing wrong. 0.4 = about half, or one error. 0.1 = the core idea is missing or wrong.
+- Be warm and concrete. Phrases, not paragraphs.`;
+
+export function explainTask(opts: { language: string; concept: string; summary: string; explanation: string }): string {
+  return `The student was asked to explain "${opts.concept}" (${opts.summary}) from memory.
+
+<explanation>
+${opts.explanation}
+</explanation>
+
+Assess the explanation. ${languageLine(opts.language)}`;
+}
+
 // ---------- Long-form outputs ----------
 
 export function guideTask(language: string, concepts: string[]): string {

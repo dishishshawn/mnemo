@@ -10,10 +10,13 @@ import {
   Headphones,
   Layers,
   MessageCircle,
+  Mic,
+  PenLine,
   ScrollText,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
+import { ExamDateField, PlanCard, useStudyPlan } from "../components/ExamPlan";
 import { LanguageSelect } from "../components/LanguageSelect";
 import { Badge, Card, ErrorBox, inputClass, LinkButton, Progress, Spinner } from "../components/ui";
 import { db } from "../lib/db";
@@ -45,6 +48,7 @@ export default function KitPage() {
     };
   }, [kitId]);
   const folders = useLiveQuery(() => db.folders.toArray());
+  const plan = useStudyPlan(kitId, kit?.examDate);
 
   if (kit === undefined) return <Spinner label="Loading" />;
   if (kit === null)
@@ -118,6 +122,7 @@ export default function KitPage() {
 
       {!building && kit.status === "ready" && (
         <>
+          {plan && <PlanCard kitId={kitId} plan={plan} />}
           <Card className="mb-6 p-5">
             <div className="mb-2 flex items-center justify-between">
               <span className="text-sm font-medium">Overall mastery</span>
@@ -131,7 +136,10 @@ export default function KitPage() {
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <Tile to={`${base}/smart`} icon={<Brain />} title="Smart Study" accent>
-              Adaptive questions that target your weak spots and get harder as you improve.
+              Adaptive multiple choice that targets your weak spots and gets harder as you improve.
+            </Tile>
+            <Tile to={`${base}/short`} icon={<PenLine />} title="Short answers">
+              Written answers, graded with a hint before the answer. Same adaptive engine.
             </Tile>
             <Tile to={`${base}/cards`} icon={<Layers />} title="Flashcards" badge={counts?.due ? <Badge tone="amber">{counts.due} due</Badge> : undefined}>
               {counts?.cards ? `${counts.cards} cards with spaced repetition.` : "Generate a deck from your material."}
@@ -150,6 +158,9 @@ export default function KitPage() {
             </Tile>
             <Tile to={`${base}/games`} icon={<Gamepad2 />} title="Games">
               Match, Term Builder and Stacker, built from your flashcards.
+            </Tile>
+            <Tile to={`${base}/explain`} icon={<Mic />} title="Explain it back">
+              Teach a concept out loud from memory. It tells you what you skipped.
             </Tile>
             <Tile to={`${base}/tutor`} icon={<MessageCircle />} title="Tutor">
               Ask questions. It guides you to the answer instead of giving it away.
@@ -172,7 +183,8 @@ export default function KitPage() {
             <Badge>{counts?.sources.length ?? 0}</Badge>
           </Card>
         </Link>
-        <Card className="grid gap-3 p-4 min-[420px]:grid-cols-2">
+        <Card className="grid gap-3 p-4 min-[420px]:grid-cols-3">
+          <ExamDateField kit={kit} />
           <label className="text-xs text-muted">
             Study in
             <LanguageSelect value={kit.language} onChange={(language) => db.kits.update(kitId, { language })} />

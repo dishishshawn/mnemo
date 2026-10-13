@@ -6,6 +6,9 @@ import { kindOf } from "./extract";
 import {
   analyzeSchema,
   analyzeTask,
+  EXPLAIN_SYSTEM,
+  explainSchema,
+  explainTask,
   flashcardSchema,
   flashcardTask,
   GRADER_SYSTEM,
@@ -23,6 +26,7 @@ import {
   tutorSystem,
   withMaterial,
   type AnalyzeResult,
+  type ExplainResult,
   type FlashcardResult,
   type GradeResult,
   type PodcastScript,
@@ -278,11 +282,25 @@ export async function generateFlashcards(kitId: string, opts: { count?: number; 
 
 // ---------- Questions ----------
 
+/**
+ * Models write the correct option first and invent the distractors after it, so the answer lands
+ * at index 0 most of the time. Shuffle on save so the position carries no information.
+ */
+export function shuffleOptions<T extends { options: string[]; answerIndex: number }>(q: T): T {
+  const order = q.options.map((_, i) => i);
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  return { ...q, options: order.map((i) => q.options[i]), answerIndex: order.indexOf(q.answerIndex) };
+}
+
 function toQuestions(kitId: string, res: QuestionResult, origin: Question["origin"], concepts: Concept[]): Question[] {
   return res.questions
     .map((q): Question | null => {
       let options = q.options ?? [];
       let answerIndex = q.answerIndex;
+      if (q.type === "mcq" && options.length >= 2 && answerIndex >= 0 && answerIndex < options.length) ({ options, answerIndex } = shuffleOptions({ options, answerIndex }));
       if (q.type === "tf") {
         options = ["True", "False"];
         // Accept either index or an answer string for TF.
@@ -424,6 +442,32 @@ export async function gradeShortAnswers(kitId: string, items: ShortAnswerItem[],
       out.set(it.id, { id: it.id, verdict: "incorrect", score: 0, feedback: out.get(it.id)?.feedback ?? "No answer given." });
   if (items.some((it) => !out.has(it.id))) throw new GeminiError("The grader skipped an answer. Try again.", "bad-json");
   return out;
+}
+
+// ---------- Explain it back ----------
+
+/**
+ * Assesses a spoken explanation of one concept against the sections of the material that teach
+ * it (the whole material when the kit is small or the concept has no known sections). Fast model,
+ * no cache: a few chunks of text is cheaper than a cache lookup.
+ */
+export async function assessExplanation(kitId: string, concept: Concept, explanation: string, signal?: AbortSignal): Promise<ExplainResult> {
+  const kit = await kitOrThrow(kitId);
+  const full = await materialFor(kitId);
+  const chunks = chunkMaterial(full);
+  const keys = new Set(concept.chunkKeys ?? []);
+  const own = chunks.filter((c) => keys.has(c.key)).map((c) => c.text);
+  const material = own.length && full.length > 12_000 ? own.join("\n\n") : full;
+  const res = await generateJson<ExplainResult>({
+    role: "fast",
+    task: "explain",
+    kitId,
+    signal,
+    system: EXPLAIN_SYSTEM,
+    contents: withMaterial(material, explainTask({ language: kit.language, concept: concept.name, summary: concept.summary, explanation })),
+    schema: explainSchema,
+  });
+  return { ...res, score: Math.min(1, Math.max(0, res.score)), covered: res.covered ?? [], missing: res.missing ?? [], errors: res.errors ?? [] };
 }
 
 // ---------- Guides, summaries ----------

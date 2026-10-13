@@ -27,10 +27,12 @@ function mockJson(schemaKeys, body) {
       ]),
     };
   if (schemaKeys.includes("questions")) {
-    const n = /write (\d+)/.exec(JSON.stringify(body))?.[1] ?? 8;
+    const text = JSON.stringify(body);
+    const n = /write (\d+)/.exec(text)?.[1] ?? 8;
+    const allowed = (/Allowed types: ([a-z, ]+)\./.exec(text)?.[1] ?? "mcq, tf, short").split(", ");
     return {
       questions: Array.from({ length: Number(n) }, (_, i) => {
-        const type = ["mcq", "tf", "short"][i % 3];
+        const type = allowed[i % allowed.length];
         return {
           concept: concepts[i % concepts.length].toLowerCase(),
           type,
@@ -45,6 +47,14 @@ function mockJson(schemaKeys, body) {
       }),
     };
   }
+  if (schemaKeys.includes("covered"))
+    return {
+      score: 0.7,
+      covered: ["Glucose is split into pyruvate", "Happens in the cytoplasm"],
+      missing: ["Net gain of 2 ATP and 2 NADH"],
+      errors: ["It does not need oxygen: glycolysis is anaerobic."],
+      tip: "Finish with the energy bookkeeping: what goes in and what comes out.",
+    };
   if (schemaKeys.includes("results")) {
     const ids = [...JSON.stringify(body).matchAll(/item id=\\"([^\\]+)\\"/g)].map((m) => m[1]);
     return { results: ids.map((id, i) => ({ id, verdict: i % 2 ? "partial" : "correct", score: i % 2 ? 0.5 : 1, feedback: "Good thinking. What about the electrons?" })) };
@@ -184,6 +194,14 @@ async function run(name, viewport, colorScheme) {
   await page.getByRole("button", { name: "Next question" }).click();
   await page.getByText(/^Question \d+/).waitFor();
 
+  // Short answers: its own section, written answers only.
+  await page.goto(`${kitUrl}/short`);
+  await page.getByPlaceholder("Explain in your own words…").waitFor({ timeout: 15000 });
+  await page.getByPlaceholder("Explain in your own words…").fill("It stores energy");
+  await page.getByRole("button", { name: "Check answer" }).click();
+  await page.getByRole("button", { name: "Next question" }).waitFor({ timeout: 15000 });
+  await shot("07b-short-answers");
+
   // Flashcards: flip and rate.
   await page.goto(`${kitUrl}/cards`);
   await page.getByText("Tap to flip").waitFor();
@@ -237,8 +255,31 @@ async function run(name, viewport, colorScheme) {
   await page.getByText("electrons at the end of the chain?").waitFor({ timeout: 15000 });
   await shot("16-tutor");
 
+  // Exam date: set it a week out and check the plan card and the forecast.
+  const inAWeek = new Date(Date.now() + 7 * 86_400_000);
+  const iso = `${inAWeek.getFullYear()}-${String(inAWeek.getMonth() + 1).padStart(2, "0")}-${String(inAWeek.getDate()).padStart(2, "0")}`;
+  await page.goto(kitUrl);
+  await page.locator('input[type="date"]').fill(iso);
+  await page.getByText("Exam in 7 days").waitFor();
+  await page.getByText(/of \d+ questions/).waitFor();
+  await shot("16b-exam-plan");
+
+  // Explain it back: type an explanation (dictation is the OS keyboard's job) and get it assessed.
+  await page.goto(`${kitUrl}/explain`);
+  await page.getByText("Pick a concept").waitFor();
+  await page.getByRole("button", { name: "Glycolysis", exact: true }).click();
+  await page.locator("textarea").fill("Glycolysis splits glucose into two pyruvate molecules in the cytoplasm and it needs oxygen to run.");
+  await page.getByRole("button", { name: /Check my explanation/ }).click();
+  await page.getByText("You skipped").waitFor({ timeout: 15000 });
+  await page.getByText("Net gain of 2 ATP and 2 NADH").waitFor();
+  await shot("16c-explain");
+  await page.getByRole("button", { name: "Next concept" }).click();
+  await page.locator("textarea").waitFor();
+
   await page.goto(`${kitUrl}/progress`);
   await page.getByText("Mastery by concept").waitFor();
+  await page.getByText("Exam-day forecast").waitFor();
+  await page.getByText("Explain it back").first().waitFor();
   await shot("17-progress");
 
   await page.goto(`${kitUrl}/sources`);

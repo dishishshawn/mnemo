@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { Badge, Button, Card, Empty, inputClass, LinkButton, Modal, PageHeader, Progress } from "../components/ui";
 import { db, deleteKit, newId, type Kit } from "../lib/db";
+import { daysUntil } from "../lib/plan";
 import { cancelKitJobs } from "../lib/jobs";
 import { isDue } from "../lib/srs";
 import { useSettings } from "../lib/settings";
@@ -166,6 +167,7 @@ function KitCard({ kit, stats, folderName }: { kit: Kit; stats?: KitStats; folde
                 <span>Mastery {Math.round((stats?.mastery ?? 0) * 100)}%</span>
                 <span className="flex gap-1.5">
                   {folderName && <Badge>{folderName}</Badge>}
+                  {kit.examDate && <ExamBadge examDate={kit.examDate} />}
                   {!!stats?.due && <Badge tone="amber">{stats.due} due</Badge>}
                 </span>
               </div>
@@ -176,4 +178,10 @@ function KitCard({ kit, stats, folderName }: { kit: Kit; stats?: KitStats; folde
       </Card>
     </Link>
   );
+}
+
+function ExamBadge({ examDate }: { examDate: string }) {
+  const days = daysUntil(examDate);
+  if (days === 0) return <Badge tone="rose">Exam day</Badge>;
+  return <Badge tone={days <= 3 ? "amber" : "brand"}>Exam in {days}d</Badge>;
 }

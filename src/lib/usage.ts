@@ -50,6 +50,7 @@ const TASK_LABELS: Record<string, string> = {
   "smart-questions": "Smart Study questions",
   "practice-test": "Practice tests",
   grade: "Grading answers",
+  explain: "Explain it back",
   guide: "Study guides",
   summary: "Summaries",
   "podcast-script": "Podcast scripts",

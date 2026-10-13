@@ -318,3 +318,85 @@ describe("question reuse", () => {
     expect(pickQuestion([fresh, missed], [c], [], now)).toBe(missed);
   });
 });
+
+describe("exam plan", async () => {
+  const { buildPlan, daysUntil, reviewsNeeded, secondsPerQuestion, examStart } = await import("./plan");
+  const now = new Date(2026, 9, 13, 10, 0); // Tue 13 Oct 2026, 10:00 local
+  const concept = (over: Partial<Concept>): Concept => ({
+    id: over.id ?? "c",
+    kitId: "k",
+    name: over.name ?? "Thing",
+    summary: "",
+    order: 0,
+    srs: newCard(now),
+    attempts: 0,
+    correct: 0,
+    mastery: 0,
+    ...over,
+  });
+
+  it("counts study days up to the night before the exam", () => {
+    expect(daysUntil("2026-10-20", now)).toBe(7);
+    expect(daysUntil("2026-10-14", now)).toBe(1);
+    expect(daysUntil("2026-10-13", now)).toBe(0);
+    expect(daysUntil("2026-10-01", now)).toBe(0);
+    expect(examStart("2026-10-20").getHours()).toBe(0);
+  });
+
+  it("needs more reviews for new concepts than for well-known ones", () => {
+    const exam = examStart("2026-10-27");
+    const fresh = reviewsNeeded(newCard(now), exam, now);
+    let strong = newCard(new Date(2026, 7, 1));
+    for (let i = 0; i < 6; i++) strong = review(strong, Rating.Good, new Date(strong.due));
+    const known = reviewsNeeded(strong, exam, now);
+    expect(fresh).toBeGreaterThanOrEqual(2);
+    expect(known).toBeLessThan(fresh);
+    expect(reviewsNeeded(strong, examStart("2026-10-14"), now)).toBeLessThanOrEqual(1);
+  });
+
+  it("spreads the work over the days left and tracks today's quota", () => {
+    const concepts = Array.from({ length: 10 }, (_, i) => concept({ id: `c${i}`, name: `C${i}` }));
+    const plan = buildPlan("2026-10-20", concepts, [], now);
+    expect(plan.daysLeft).toBe(7);
+    expect(plan.over).toBe(false);
+    expect(plan.questionsPerDay).toBeGreaterThan(0);
+    expect(plan.readiness).toBe(0);
+    expect(plan.curve).toHaveLength(8);
+    expect(plan.curve[0].day).toBe("2026-10-13");
+    expect(plan.status).toBe("on-track");
+    const attempts = Array.from({ length: plan.questionsPerDay }, (_, i) => ({ id: `a${i}`, kitId: "k", questionId: "q", concept: "C0", mode: "smart" as const, response: "", score: 1, usedHint: false, at: now.getTime() - i * 60_000 }));
+    const later = buildPlan("2026-10-20", concepts, attempts, now);
+    expect(later.doneToday).toBe(plan.questionsPerDay);
+    expect(later.leftToday).toBe(0);
+    expect(later.status).toBe("ahead");
+  });
+
+  it("is over on exam day and ready when everything holds", () => {
+    expect(buildPlan("2026-10-13", [concept({})], [], now).over).toBe(true);
+    let strong = newCard(new Date(2026, 7, 1));
+    for (let i = 0; i < 6; i++) strong = review(strong, Rating.Good, new Date(strong.due));
+    const plan = buildPlan("2026-10-14", [concept({ srs: strong, attempts: 6, correct: 6, mastery: 0.9 })], [], now);
+    expect(plan.readiness).toBeGreaterThan(0.8);
+  });
+
+  it("measures seconds per question from gaps within a sitting", () => {
+    const at = (i: number) => ({ id: `a${i}`, kitId: "k", questionId: "q", concept: "C", mode: "smart" as const, response: "", score: 1, usedHint: false, at: now.getTime() + i * 30_000 });
+    expect(secondsPerQuestion([])).toBe(45);
+    expect(secondsPerQuestion(Array.from({ length: 8 }, (_, i) => at(i)))).toBe(30);
+  });
+});
+
+describe("shuffleOptions", async () => {
+  const { shuffleOptions } = await import("./study");
+  it("keeps the answer attached to its text and spreads it across positions", () => {
+    const q = { options: ["right", "a", "b", "c"], answerIndex: 0 };
+    const seen = new Set<number>();
+    for (let i = 0; i < 200; i++) {
+      const s = shuffleOptions(q);
+      expect(s.options[s.answerIndex]).toBe("right");
+      expect([...s.options].sort()).toEqual([...q.options].sort());
+      seen.add(s.answerIndex);
+    }
+    expect(seen.size).toBe(4);
+  });
+});

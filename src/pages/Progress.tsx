@@ -1,7 +1,9 @@
 import { useLiveQuery } from "dexie-react-hooks";
+import { ForecastCurve, useStudyPlan } from "../components/ExamPlan";
 import { Card, PageHeader, Spinner, MissingKit } from "../components/ui";
 import { db } from "../lib/db";
 import { useConcepts, useKit } from "../lib/hooks";
+import { TARGET_RETENTION } from "../lib/plan";
 import { levelOf } from "../lib/smart";
 import { formatInterval, isDue } from "../lib/srs";
 
@@ -26,6 +28,7 @@ function streak(times: number[]): number {
 export default function ProgressPage() {
   const { kitId, kit } = useKit();
   const concepts = useConcepts(kitId);
+  const plan = useStudyPlan(kitId, kit?.examDate);
   const data = useLiveQuery(async () => {
     const [attempts, cards, tests, questions] = await Promise.all([
       db.attempts.where("kitId").equals(kitId).toArray(),
@@ -54,6 +57,39 @@ export default function ProgressPage() {
         <Stat label="Day streak" value={String(streak(attempts.map((a) => a.at)))} />
         <Stat label="Cards due" value={String(cards.filter((c) => isDue(c.srs)).length)} />
       </div>
+
+      {plan && (
+        <Card className="p-5">
+          <h2 className="mb-1 font-semibold">Exam-day forecast</h2>
+          <p className="mb-3 text-xs text-muted">
+            What you're predicted to still recall, day by day, if you stopped studying now. Each answer you give moves the curve up.
+          </p>
+          <ForecastCurve plan={plan} className="mb-4" />
+          <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <Stat label="Recall on exam day" value={`${Math.round(plan.readiness * 100)}%`} sub={`target ${Math.round(TARGET_RETENTION * 100)}%`} />
+            <Stat label="Concepts ready" value={`${Math.round(plan.readyShare * 100)}%`} sub="above target with no more study" />
+            <Stat label="To do before the exam" value={plan.over ? "–" : String(plan.forecasts.reduce((n, f) => n + f.reviewsNeeded, 0))} sub={plan.over ? "exam day" : `reviews · ${plan.questionsPerDay}/day`} />
+          </div>
+          {!plan.over && plan.forecasts.some((f) => f.onExamDay < TARGET_RETENTION) && (
+            <>
+              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">Most at risk</div>
+              <ul className="divide-y divide-[var(--border)] text-sm">
+                {plan.forecasts
+                  .filter((f) => f.onExamDay < TARGET_RETENTION)
+                  .slice(0, 8)
+                  .map((f) => (
+                    <li key={f.concept.id} className="flex items-center justify-between gap-3 py-1.5">
+                      <span className="truncate">{f.concept.name}</span>
+                      <span className="shrink-0 text-xs tabular-nums text-muted">
+                        {f.concept.attempts === 0 ? "not started" : `${Math.round(f.onExamDay * 100)}% on exam day`} · {f.reviewsNeeded} review{f.reviewsNeeded === 1 ? "" : "s"} needed
+                      </span>
+                    </li>
+                  ))}
+              </ul>
+            </>
+          )}
+        </Card>
+      )}
 
       <Card className="p-5">
         <h2 className="mb-1 font-semibold">Mastery by concept</h2>
@@ -109,9 +145,9 @@ export default function ProgressPage() {
             {attempts.slice(0, 30).map((a) => (
               <li key={a.id} className="flex items-start justify-between gap-3 py-2">
                 <div className="min-w-0">
-                  <div className="line-clamp-2">{questions.get(a.questionId)?.prompt ?? "(question removed)"}</div>
+                  <div className="line-clamp-2">{a.mode === "explain" ? `Explained ${a.concept} in your own words` : (questions.get(a.questionId)?.prompt ?? "(question removed)")}</div>
                   <div className="text-xs text-muted">
-                    {a.concept} · {a.mode === "smart" ? "Smart Study" : "Test"} · {new Date(a.at).toLocaleDateString()}
+                    {a.concept} · {a.mode === "smart" ? "Smart Study" : a.mode === "explain" ? "Explain it back" : "Test"} · {new Date(a.at).toLocaleDateString()}
                     {a.usedHint && " · used hint"}
                   </div>
                 </div>

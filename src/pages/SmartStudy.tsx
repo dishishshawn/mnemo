@@ -2,6 +2,7 @@ import clsx from "clsx";
 import { Check, Eye, Lightbulb, Sparkles, Target, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { InlineMarkdown, Markdown } from "../components/Markdown";
+import { useStudyPlan } from "../components/ExamPlan";
 import { Badge, Button, Card, ErrorBox, inputClass, PageHeader, Progress, Spinner, MissingKit } from "../components/ui";
 import { db, newId, type Concept, type Question } from "../lib/db";
 import { useConcepts, useKit } from "../lib/hooks";
@@ -10,15 +11,22 @@ import { generateSmartQuestions, gradeShortAnswers } from "../lib/study";
 
 const ROUND = 10;
 type Phase = "answering" | "retry" | "done";
+export type Mode = "choice" | "short";
+
+/** Smart Study asks multiple choice and true/false; the Short answers section asks the written ones. */
+const TYPES: Record<Mode, Question["type"][]> = { choice: ["mcq", "tf"], short: ["short"] };
+const TITLES: Record<Mode, string> = { choice: "Smart Study", short: "Short answers" };
 
 interface Outcome {
   score: number;
   feedback?: string;
 }
 
-export default function SmartStudy() {
+export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
   const { kitId, kit } = useKit();
+  const types = TYPES[mode];
   const concepts = useConcepts(kitId);
+  const plan = useStudyPlan(kitId, kit?.examDate);
   const [steer, setSteer] = useState("");
   const [focus, setFocus] = useState<string[]>([]);
   const [question, setQuestion] = useState<Question | null>(null);
@@ -46,10 +54,10 @@ export default function SmartStudy() {
       await generateSmartQuestions(
         kitId,
         targets.map((t) => ({ name: t.name, mastery: t.mastery, attempts: t.attempts })),
-        { count: BATCH_SIZE, steer: steer.trim() || undefined },
+        { count: BATCH_SIZE, steer: steer.trim() || undefined, types },
       );
     },
-    [kitId, steer, targetsFor],
+    [kitId, steer, targetsFor, types],
   );
 
   const next = useCallback(async () => {
@@ -66,7 +74,7 @@ export default function SmartStudy() {
     setError("");
     // The last answer must be saved (askedAt) before picking, or the same question can come back.
     await saving.current;
-    const fresh = (pool: Question[]) => pool.filter((p) => !askedIds.current.has(p.id));
+    const fresh = (pool: Question[]) => pool.filter((p) => !askedIds.current.has(p.id) && types.includes(p.type));
     const all = await db.concepts.where("kitId").equals(kitId).sortBy("order");
     if (!all.length) return setError("This kit has no concepts yet.");
     const targets = targetsFor(all);
@@ -184,7 +192,7 @@ export default function SmartStudy() {
   return (
     <div className="mx-auto max-w-2xl">
       <PageHeader
-        title="Smart Study"
+        title={TITLES[mode]}
         subtitle={kit.title}
         back={`/kit/${kitId}`}
         actions={
@@ -237,6 +245,17 @@ export default function SmartStudy() {
           {round.answered % ROUND || (roundDone ? ROUND : 0)}/{ROUND}
         </span>
       </div>
+      {plan && !plan.over && plan.questionsPerDay > 0 && (
+        <p className="-mt-2 mb-4 text-xs text-muted">
+          {plan.leftToday > 0 ? (
+            <>
+              <b>{plan.leftToday}</b> more today to stay on pace for the exam in {plan.daysLeft} day{plan.daysLeft === 1 ? "" : "s"}.
+            </>
+          ) : (
+            <>Today's quota done. Anything more is a head start on tomorrow.</>
+          )}
+        </p>
+      )}
 
       {error && <ErrorBox error={error} onRetry={next} />}
       {loading && !question && (
