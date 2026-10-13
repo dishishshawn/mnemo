@@ -1,3 +1,4 @@
+import "./lib/polyfills"; // must run first
 import { lazy, StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { HashRouter, Route, Routes, useLocation } from "react-router";

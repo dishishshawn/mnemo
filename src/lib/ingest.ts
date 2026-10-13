@@ -57,9 +57,13 @@ export async function ingestFile(file: File, kind: SourceKind, opts: IngestOptio
     }
     case "pdf": {
       opts.onStatus?.("Reading PDF");
-      const pdf = await pdfText(file);
-      if (choosePdfReader(pdf.pages, pdf.charsPerPage, opts.pdfMode ?? "auto") === "local") return { text: pdf.text, via: "local" };
-      opts.onStatus?.(`Reading ${pdf.pages} pages with Gemini, figures included`);
+      // Local reading is an optimisation; if the browser can't do it, Gemini reads the file instead.
+      const pdf = await pdfText(file).catch((err) => {
+        console.warn("Local PDF reading failed; using Gemini", err);
+        return null;
+      });
+      if (pdf && choosePdfReader(pdf.pages, pdf.charsPerPage, opts.pdfMode ?? "auto") === "local") return { text: pdf.text, via: "local" };
+      opts.onStatus?.(`Reading ${pdf ? `${pdf.pages} pages` : "the PDF"} with Gemini, figures included`);
       return transcribe(file, "document", "smart", opts);
     }
     case "image":
