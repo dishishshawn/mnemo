@@ -259,3 +259,62 @@ describe("PDF reader choice", () => {
     expect(choosePdfReader(40, 50, "local")).toBe("ai"); // scanned: local text is useless
   });
 });
+
+describe("material chunks and focus", () => {
+  const para = (i: number, n = 400) => `Paragraph ${i}. ${"word ".repeat(n / 5)}`.trim();
+  const big = Array.from({ length: 150 }, (_, i) => para(i)).join("\n\n"); // ~60k chars
+
+  it("chunks on paragraph boundaries with stable content keys", async () => {
+    const { chunkMaterial, markedMaterial, hashText } = await import("./material");
+    const chunks = chunkMaterial(big);
+    expect(chunks.length).toBeGreaterThan(20);
+    for (const c of chunks) expect(c.text.length).toBeLessThanOrEqual(1800);
+    expect(chunks.map((c) => c.text).join("\n\n")).toBe(big);
+    expect(chunks[3].key).toBe(hashText(chunks[3].text));
+    expect(markedMaterial(chunks)).toContain("<!-- chunk 3 -->");
+    // Adding a source in front doesn't change existing keys.
+    const shifted = chunkMaterial(`# Source: new\n\nfresh text\n\n${big}`);
+    expect(shifted.map((c) => c.key)).toEqual(expect.arrayContaining(chunks.slice(1).map((c) => c.key)));
+  });
+
+  it("sends everything for small kits, and excerpts with neighbours for big ones", async () => {
+    const { chunkMaterial, focusMaterial } = await import("./material");
+    const small = chunkMaterial(big.slice(0, 20_000));
+    expect(focusMaterial(small, [[small[0].key]])).toBeNull();
+    const chunks = chunkMaterial(big);
+    const focused = focusMaterial(chunks, [[chunks[5].key], [chunks[20].key]]);
+    expect(focused).not.toBeNull();
+    for (const i of [4, 5, 6, 19, 20, 21]) expect(focused).toContain(chunks[i].text.slice(0, 40));
+    expect(focused).not.toContain(chunks[12].text.slice(0, 40));
+    expect(focused!.length).toBeLessThan(big.length / 3);
+    expect(focused).toContain("[…]");
+  });
+
+  it("falls back to everything when a target has no chunks or the selection is most of the kit", async () => {
+    const { chunkMaterial, focusMaterial } = await import("./material");
+    const chunks = chunkMaterial(big);
+    expect(focusMaterial(chunks, [[chunks[5].key], undefined])).toBeNull();
+    expect(focusMaterial(chunks, [chunks.map((c) => c.key)])).toBeNull();
+  });
+});
+
+describe("question reuse", () => {
+  const day = 86_400_000;
+  const now = new Date("2026-10-20T12:00:00Z");
+  it("brings back missed questions after a day, up to three asks, never correct ones", async () => {
+    const { isAskable } = await import("./smart");
+    const base = question("x", 1);
+    expect(isAskable(base, now)).toBe(true);
+    expect(isAskable({ ...base, askedAt: now.getTime() - 2 * day, asks: 1, lastScore: 0 }, now)).toBe(true);
+    expect(isAskable({ ...base, askedAt: now.getTime() - 3_600_000, asks: 1, lastScore: 0 }, now)).toBe(false);
+    expect(isAskable({ ...base, askedAt: now.getTime() - 2 * day, asks: 3, lastScore: 0 }, now)).toBe(false);
+    expect(isAskable({ ...base, askedAt: now.getTime() - 30 * day, asks: 1, lastScore: 1 }, now)).toBe(false);
+  });
+
+  it("prefers a due review over a fresh question for the same concept", () => {
+    const c = concept("x", { attempts: 2, mastery: 0.3 });
+    const fresh = question("x", 1);
+    const missed = question("x", 1, { askedAt: now.getTime() - 2 * day, asks: 1, lastScore: 0 });
+    expect(pickQuestion([fresh, missed], [c], [], now)).toBe(missed);
+  });
+});

@@ -36,6 +36,7 @@ export default defineConfig({
   test: {
     environment: "node",
     // `just smoke` sets SMOKE=1 to run the live Gemini test instead of the unit tests.
-    include: process.env.SMOKE ? ["scripts/smoke.test.ts"] : ["src/**/*.test.ts"],
+    // SMOKE_FILE=<path> runs one ad-hoc live check instead.
+    include: process.env.SMOKE_FILE ? [process.env.SMOKE_FILE] : process.env.SMOKE ? ["scripts/smoke.test.ts"] : ["src/**/*.test.ts"],
   },
 });

@@ -11,6 +11,8 @@ export interface Rates {
   output: number;
   /** Audio output (TTS models). */
   audioOutput?: number;
+  /** Explicit-cache storage, per 1M tokens per hour. */
+  cacheStorage?: number;
 }
 
 export interface ModelPrice {
@@ -28,21 +30,21 @@ export const MODELS: ModelPrice[] = [
     label: "Gemini 3.8 Flash",
     kind: "text",
     note: "Best quality per dollar. Price doubles on 2027-01-01.",
-    rates: { input: 0.75, cachedInput: 0.075, output: 3.75 },
-    changes: [{ from: "2027-01-01", rates: { input: 1.5, cachedInput: 0.15, output: 7.5 } }],
+    rates: { input: 0.75, cachedInput: 0.075, output: 3.75, cacheStorage: 0.5 },
+    changes: [{ from: "2027-01-01", rates: { input: 1.5, cachedInput: 0.15, output: 7.5, cacheStorage: 1 } }],
   },
   {
     id: "gemini-3.5-flash-lite",
     label: "Gemini 3.5 Flash-Lite",
     kind: "text",
-    rates: { input: 0.3, cachedInput: 0.03, output: 2.5 },
+    rates: { input: 0.3, cachedInput: 0.03, output: 2.5, cacheStorage: 1 },
   },
   {
     id: "gemini-3.1-flash-lite",
     label: "Gemini 3.1 Flash-Lite",
     kind: "text",
     note: "Cheapest current model. Good for transcription and grading.",
-    rates: { input: 0.25, audioInput: 0.5, cachedInput: 0.025, output: 1.5 },
+    rates: { input: 0.25, audioInput: 0.5, cachedInput: 0.025, output: 1.5, cacheStorage: 1 },
   },
   {
     id: "gemini-2.5-flash-lite",
@@ -144,6 +146,12 @@ export function costOf(modelId: string, usage: UsageMetadata, at: Date = new Dat
     (t.output + t.thoughts) * r.output +
     t.audioOutput * (r.audioOutput ?? r.output);
   return perM / 1_000_000;
+}
+
+/** What storing `tokens` in an explicit cache for `hours` costs. */
+export function cacheStorageCost(modelId: string, tokens: number, hours: number, at: Date = new Date()): number {
+  const r = ratesAt(modelId, at);
+  return r?.cacheStorage ? (tokens / 1_000_000) * r.cacheStorage * hours : 0;
 }
 
 export function formatUsd(usd: number): string {

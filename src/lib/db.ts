@@ -53,6 +53,8 @@ export interface Concept {
   correct: number;
   /** 0..1, an exponential moving average of recent scores. */
   mastery: number;
+  /** Keys of the material chunks that teach this concept (see material.ts). */
+  chunkKeys?: string[];
 }
 
 export interface Flashcard {
@@ -82,8 +84,12 @@ export interface Question {
   hint: string;
   origin: "smart" | "test";
   createdAt: number;
-  /** Set once the question has been asked in Smart Study. */
+  /** When it was last asked in Smart Study. */
   askedAt?: number;
+  /** How many times it has been asked. */
+  asks?: number;
+  /** Score on the last ask, 0..1. Missed questions come back after a day. */
+  lastScore?: number;
 }
 
 export interface Attempt {

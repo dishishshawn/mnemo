@@ -56,6 +56,7 @@ const TASK_LABELS: Record<string, string> = {
   "podcast-audio": "Podcast audio",
   tutor: "Tutor chat",
   "key-check": "API key test",
+  cache: "Material cache",
   "ingest:document": "Reading PDFs",
   "ingest:image": "Reading images",
   "ingest:audio": "Transcribing audio",

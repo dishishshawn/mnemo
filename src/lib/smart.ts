@@ -58,17 +58,32 @@ export function pickTargets(concepts: Concept[], k: number, now = new Date(), fo
   return out;
 }
 
-/** Chooses the next unasked question for the target concepts, closest to the right difficulty. */
-export function pickQuestion(questions: Question[], targets: Concept[], recentConcepts: string[] = []): Question | undefined {
-  const unasked = questions.filter((q) => !q.askedAt && q.origin === "smart");
+/** A missed question comes back after a day (retrieval practice), up to this many asks in total. */
+export const REASK_AFTER_MS = 24 * 3_600_000;
+export const MAX_ASKS = 3;
+
+/** Never asked, or missed at least a day ago and not yet asked the maximum number of times. */
+export function isAskable(q: Question, now = new Date()): boolean {
+  if (q.origin !== "smart") return false;
+  if (!q.askedAt) return true;
+  return (q.lastScore ?? 1) < 0.8 && (q.asks ?? 1) < MAX_ASKS && now.getTime() - q.askedAt >= REASK_AFTER_MS;
+}
+
+/**
+ * Chooses the next question for the target concepts, closest to the right difficulty. A missed
+ * question that is due again is preferred slightly over a fresh one: that's the review.
+ */
+export function pickQuestion(questions: Question[], targets: Concept[], recentConcepts: string[] = [], now = new Date()): Question | undefined {
+  const askable = questions.filter((q) => isAskable(q, now));
   const byName = new Map(targets.map((c, i) => [c.name.toLowerCase(), { c, i }]));
   let best: { q: Question; score: number } | undefined;
-  for (const q of unasked) {
+  for (const q of askable) {
     const t = byName.get(q.concept.toLowerCase());
     if (!t) continue;
     // Lower is better: target priority, difficulty mismatch, and not the same concept as the last few.
     const repeatPenalty = recentConcepts.slice(-3).includes(q.concept) ? 4 : 0;
-    const score = t.i + 2 * Math.abs(q.difficulty - targetDifficulty(t.c)) + repeatPenalty;
+    const reviewBonus = q.askedAt ? -1 : 0;
+    const score = t.i + 2 * Math.abs(q.difficulty - targetDifficulty(t.c)) + repeatPenalty + reviewBonus;
     if (!best || score < best.score) best = { q, score };
   }
   return best?.q;
@@ -96,11 +111,12 @@ export function applyAnswer(c: Concept, score: number, usedHint: boolean, now = 
 
 /** How many unasked questions to keep ready before generating more. */
 export const POOL_LOW_WATER = 3;
-export const BATCH_SIZE = 8;
+/** Questions per Gemini call. Each call rereads the material, so bigger batches are cheaper per question. */
+export const BATCH_SIZE = 16;
 
-export function needsMore(questions: Question[], targets: Concept[]): boolean {
+export function needsMore(questions: Question[], targets: Concept[], now = new Date()): boolean {
   const names = new Set(targets.map((t) => t.name.toLowerCase()));
-  const ready = questions.filter((q) => !q.askedAt && q.origin === "smart" && names.has(q.concept.toLowerCase()));
+  const ready = questions.filter((q) => isAskable(q, now) && names.has(q.concept.toLowerCase()));
   return ready.length < POOL_LOW_WATER;
 }
 

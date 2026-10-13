@@ -119,7 +119,7 @@ export default function SmartStudy() {
     const concept = await db.concepts.where("kitId").equals(kitId).filter((c) => c.name === q.concept).first();
     await db.transaction("rw", db.concepts, db.questions, db.attempts, db.kits, async () => {
       if (concept) await db.concepts.put(applyAnswer(concept, score, usedHint));
-      await db.questions.update(q.id, { askedAt: Date.now() });
+      await db.questions.update(q.id, { askedAt: Date.now(), asks: (q.asks ?? 0) + 1, lastScore: score });
       await db.attempts.add({ id: newId(), kitId, questionId: q.id, concept: q.concept, mode: "smart", response, score, usedHint, feedback: fb, at: Date.now() });
       await db.kits.update(kitId, { lastStudiedAt: Date.now() });
     });
@@ -251,6 +251,7 @@ export default function SmartStudy() {
             <Badge tone="brand">{question.concept}</Badge>
             {currentConcept && <Badge>{levelOf(currentConcept)}</Badge>}
             <Badge>{"●".repeat(question.difficulty)}{"○".repeat(3 - question.difficulty)}</Badge>
+            {question.askedAt && <Badge tone="amber">missed before</Badge>}
           </div>
           <InlineMarkdown className="mb-5 text-lg font-medium leading-relaxed">{question.prompt}</InlineMarkdown>
 

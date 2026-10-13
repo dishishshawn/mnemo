@@ -6,7 +6,7 @@ import {
   type Part,
   ThinkingLevel,
 } from "@google/genai";
-import { breakdown, costOf, findModel, type UsageMetadata } from "./pricing";
+import { breakdown, cacheStorageCost, costOf, findModel, type UsageMetadata } from "./pricing";
 import { getSettings, type Settings } from "./settings";
 
 export type Role = "smart" | "fast";
@@ -74,7 +74,8 @@ export interface CallOptions {
 
 function buildConfig(opts: CallOptions, thinking: Settings["smartThinking"]): GenerateContentConfig {
   const config: GenerateContentConfig = { ...opts.config, abortSignal: opts.signal };
-  if (opts.system) config.systemInstruction = opts.system;
+  // With an explicit cache the system instruction lives in the cache; sending it again is a 400.
+  if (opts.system && !config.cachedContent) config.systemInstruction = opts.system;
   if (thinking !== "default") config.thinkingConfig = { thinkingLevel: thinking as ThinkingLevel };
   return config;
 }
@@ -328,6 +329,64 @@ export async function uploadFile(blob: Blob, mimeType: string, displayName: stri
   }
   if (info.state === "FAILED") throw new GeminiError(`Gemini couldn't process ${displayName}.`);
   return { uri: info.uri!, mimeType: info.mimeType ?? mimeType };
+}
+
+// ---------- Explicit context caching ----------
+
+export const CACHE_TTL_SEC = 3600;
+/** Gemini 3.x Flash caches need at least ~4,096 tokens; below that, creation fails. */
+export const CACHE_MIN_CHARS = 4500 * 4;
+
+export interface CacheHandle {
+  name: string;
+  model: string;
+  expiresAt: number;
+  tokens: number;
+}
+
+/**
+ * Stores `systemInstruction` + `material` server-side for an hour, so repeat calls pay 10% for
+ * those tokens instead of 100%. Returns null when caching isn't possible (too small, model
+ * doesn't support it, key not allowed), and the caller sends the material inline instead.
+ */
+export async function createMaterialCache(opts: {
+  role: Role;
+  system: string;
+  material: string;
+  kitId: string;
+  signal?: AbortSignal;
+}): Promise<CacheHandle | null> {
+  if (opts.material.length < CACHE_MIN_CHARS) return null;
+  const { model } = modelFor(opts.role);
+  try {
+    const cache = await ai().caches.create({
+      model,
+      config: {
+        displayName: `mnemo-${opts.kitId.slice(0, 8)}`,
+        systemInstruction: opts.system,
+        contents: [{ role: "user", parts: [{ text: `<material>\n${opts.material}\n</material>` }] }],
+        ttl: `${CACHE_TTL_SEC}s`,
+        abortSignal: opts.signal,
+      },
+    });
+    if (!cache.name) return null;
+    const tokens = cache.usageMetadata?.totalTokenCount ?? Math.round(opts.material.length / 4);
+    // Creation bills the tokens once at the input rate, plus storage for the TTL.
+    env.onUsage({
+      at: Date.now(),
+      model,
+      task: "cache",
+      kitId: opts.kitId,
+      usage: { promptTokenCount: tokens },
+      costUsd: costOf(model, { promptTokenCount: tokens }) + cacheStorageCost(model, tokens, CACHE_TTL_SEC / 3600),
+    });
+    const expiresAt = cache.expireTime ? new Date(cache.expireTime).getTime() : Date.now() + CACHE_TTL_SEC * 1000;
+    return { name: cache.name, model, expiresAt, tokens };
+  } catch (err) {
+    if (opts.signal?.aborted) throw err;
+    console.warn("Context cache unavailable; sending material inline", err);
+    return null;
+  }
 }
 
 export function knownModel(id: string): boolean {

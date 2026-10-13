@@ -61,9 +61,13 @@ function silencePcmBase64(seconds) {
   return Buffer.alloc(24000 * 2 * seconds).toString("base64");
 }
 
+let cacheSeq = 0;
 async function handle(route) {
   const req = route.request();
   const url = req.url();
+  // Explicit context cache creation.
+  if (/cachedContents/.test(url) && req.method() === "POST")
+    return route.fulfill({ json: { name: `cachedContents/e2e-${++cacheSeq}`, model: "models/gemini-3.8-flash", expireTime: new Date(Date.now() + 3600e3).toISOString(), usageMetadata: { totalTokenCount: 5000 } } });
   const body = req.postDataJSON?.() ?? {};
   const cfg = body.generationConfig ?? {};
   const keys = Object.keys(cfg.responseJsonSchema?.properties ?? {});

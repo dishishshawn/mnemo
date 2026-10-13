@@ -27,6 +27,11 @@ export function withMaterial(material: string, task: string): Content[] {
   ];
 }
 
+/** When the material is already in an explicit cache, only the task is sent. */
+export function taskOnly(task: string): Content[] {
+  return [{ role: "user", parts: [{ text: task }] }];
+}
+
 // ---------- Kit analysis ----------
 
 export const analyzeSchema = {
@@ -42,8 +47,13 @@ export const analyzeSchema = {
         properties: {
           name: { type: "string", description: "Concept name, max 6 words" },
           summary: { type: "string", description: "One sentence on what the student must understand" },
+          chunks: {
+            type: "array",
+            items: { type: "integer" },
+            description: "Numbers of every <!-- chunk N --> section that teaches this concept",
+          },
         },
-        required: ["name", "summary"],
+        required: ["name", "summary", "chunks"],
       },
     },
   },
@@ -54,12 +64,13 @@ export interface AnalyzeResult {
   title: string;
   description: string;
   emoji: string;
-  concepts: { name: string; summary: string }[];
+  concepts: { name: string; summary: string; chunks?: number[] }[];
 }
 
 export function analyzeTask(language: string): string {
   return `Task: map this material for study.
 Identify the key concepts a student must master, in the order the material presents them. Use between 5 and 30 concepts depending on how much material there is; merge minor points into broader concepts rather than listing every fact.
+The material is divided into numbered sections marked <!-- chunk N -->. For each concept, list every chunk number that teaches it (definitions, explanations, figures, examples). A chunk may belong to several concepts.
 ${languageLine(language)}`;
 }
 
@@ -183,7 +194,7 @@ ${
 }
 Allowed types: ${opts.types.join(", ")}. Use a mix if more than one is allowed.
 - mcq: exactly 4 options, one clearly correct; distractors must be plausible misconceptions, similar in length and style. Never use "all of the above" or "none of the above".
-- tf: a precise statement; avoid trick wording and absolute words used only to make it false.
+- tf: a precise statement, written as a plain statement (never prefixed with "True or False:"); avoid trick wording and absolute words used only to make it false.
 - short: answerable in 1 to 3 sentences; the model answer lists the essential points a grader should look for.
 - The hint must never reveal the answer; ask a guiding question or point at the relevant idea.
 ${opts.avoid.length ? `Do not repeat or closely paraphrase these earlier questions:\n${opts.avoid.slice(-60).map((q) => `- ${q}`).join("\n")}\n` : ""}${
@@ -313,7 +324,11 @@ ${opts.focus ? `- Focus on: ${opts.focus}\n` : ""}${languageLine(opts.language)}
 export function tutorSystem(socratic: boolean, language: string): string {
   return `${SYSTEM}
 
-You are now tutoring the student one-on-one about the material.
+${tutorInstructions(socratic, language)}`;
+}
+
+export function tutorInstructions(socratic: boolean, language: string): string {
+  return `You are now tutoring the student one-on-one about the material.
 ${
   socratic
     ? `Teach Socratically. Do not hand over answers to questions that look like homework or practice problems. Instead ask one guiding question at a time, check the student's reasoning, and give hints that get progressively more specific. When the student reaches the answer, confirm it and briefly consolidate. If the student is clearly stuck after several tries, or just wants a concept explained (not a problem solved), explain it clearly, then check understanding with a quick question.`

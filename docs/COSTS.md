@@ -44,7 +44,23 @@ no cache hits, so real bills should come in lower.
 
 Source: <https://ai.google.dev/gemini-api/docs/pricing>
 
-## Per feature
+## How Smart Study is kept cheap
+
+Measured on a real two-lecture kit (~7k tokens), 20 questions answered, 2026-10-13:
+
+| Mechanism | Effect |
+| --- | --- |
+| **Explicit context cache.** The kit's material (and system prompt) is stored with Gemini for an hour on first use (≈$0.009 for this kit), then every call in the session pays 10% for it. | Input cost per batch fell from ~$0.003 to ~$0.0005. |
+| **Batches of 16 questions** instead of 8. | Half as many rereads of the material per question. |
+| **Reuse of missed questions.** A question she got wrong comes back after a day (up to 3 asks); correct ones are never repeated. | Fewer questions written over a term, and it's proper retrieval practice. |
+| **Topic-only material on big kits.** When mapping a kit, Gemini tags which sections teach each concept; for kits over ~10k tokens, a batch sends only the sections for its target concepts (plus neighbours). | Keeps the per-batch cost flat as kits grow. Small kits send everything (the cache discount wins there). |
+
+Result: **≈$0.10 per 100 Smart Study questions** on this kit (generation $0.013 per 16, cache
+$0.009 per session, grading $0.0002 per typed answer), down from $0.15–0.25. Output tokens
+(the questions, options, hints and explanations) are now most of the cost, and those aren't
+trimmed: that's the quality. On the free tier all of this is $0.
+
+
 
 Assumes a kit with ~15k tokens of material (a 40-slide lecture plus notes, or a textbook chapter).
 These estimates assume ~1k thinking tokens per call; the live run measured 0, so they run high.
@@ -52,7 +68,7 @@ These estimates assume ~1k thinking tokens per call; the live run measured 0, so
 | Action                                    | Approx. tokens (in / out)    | Cost now | From 2027 |
 | ----------------------------------------- | ---------------------------- | -------- | --------- |
 | Build a kit (map concepts + 24 flashcards) | 31k / 5k                    | $0.04    | $0.09     |
-| Smart Study, per question (generated 8 at a time) | 2k / 0.5k               | $0.003   | $0.007    |
+| Smart Study, per question (16 per call, cached material) | 0.5k / 0.2k    | $0.001   | $0.002    |
 | Grade one short answer                    | 0.6k / 0.2k (Flash-Lite)     | $0.0005  | $0.0005   |
 | Practice test, 15 questions               | 16k / 6.5k                   | $0.04    | $0.08     |
 | Study guide                               | 15k / 6k                     | $0.03    | $0.07     |

@@ -1,5 +1,6 @@
 import { db, newId, type Concept, type Flashcard, type Kit, type Output, type Question, type Source } from "./db";
-import { GeminiError, generateJson, generateText, streamText, synthesizeDialogue } from "./gemini";
+import { type CacheHandle, createMaterialCache, GeminiError, generateJson, generateText, streamText, synthesizeDialogue, type Role } from "./gemini";
+import { chunkMaterial, focusMaterial, hashText, markedMaterial } from "./material";
 import { ingestFile, ingestWebPage, ingestYouTube, stripFence, type PdfMode } from "./ingest";
 import { kindOf } from "./extract";
 import {
@@ -18,6 +19,7 @@ import {
   questionTask,
   summaryTask,
   SYSTEM,
+  taskOnly,
   tutorSystem,
   withMaterial,
   type AnalyzeResult,
@@ -54,6 +56,47 @@ export async function materialFor(kitId: string): Promise<string> {
 }
 
 const norm = (s: string) => s.trim().toLowerCase();
+
+// ---------- Material context: explicit cache when it pays, inline otherwise ----------
+
+interface KitContext {
+  material: string;
+  /** Builds the contents for a task: just the task when the material is cached, else material + task. */
+  contents: (task: string) => Content[];
+  config: { cachedContent?: string };
+}
+
+const caches = new Map<string, CacheHandle & { hash: string }>();
+const cacheRefusedAt = new Map<string, number>();
+const CACHE_RETRY_MS = 15 * 60_000;
+
+/**
+ * The kit's material plus the system instruction, held in a Gemini explicit cache for an hour so
+ * every call in a study session pays the cached rate for it. Falls back to sending the material
+ * inline when the kit is too small to cache or the API refuses. Keyed per system text, so the
+ * tutor's instructions can stay a real system instruction.
+ */
+async function kitContext(kitId: string, role: Role, system: string, signal?: AbortSignal): Promise<KitContext> {
+  const material = await materialFor(kitId);
+  const hash = hashText(material + "\u0000" + system);
+  const model = role === "smart" ? getSettings().smartModel : getSettings().fastModel;
+  const key = `${kitId}:${role}:${hashText(system)}`;
+  let handle = caches.get(key);
+  if (handle && (handle.hash !== hash || handle.model !== model || handle.expiresAt - Date.now() < 90_000)) {
+    caches.delete(key);
+    handle = undefined;
+  }
+  if (!handle && Date.now() - (cacheRefusedAt.get(key) ?? 0) > CACHE_RETRY_MS) {
+    const created = await createMaterialCache({ role, system, material, kitId, signal });
+    if (created) {
+      handle = { ...created, hash };
+      caches.set(key, handle);
+    } else cacheRefusedAt.set(key, Date.now());
+  }
+  return handle
+    ? { material, contents: taskOnly, config: { cachedContent: handle.name } }
+    : { material, contents: (task) => withMaterial(material, task), config: {} };
+}
 
 // ---------- Creating kits and adding material ----------
 
@@ -156,23 +199,24 @@ export async function addSources(
 
 export async function analyzeKit(kitId: string, signal?: AbortSignal): Promise<void> {
   const kit = await kitOrThrow(kitId);
-  const material = await materialFor(kitId);
+  const chunks = chunkMaterial(await materialFor(kitId));
   const res = await generateJson<AnalyzeResult>({
     role: "smart",
     task: "analyze",
     kitId,
     signal,
     system: SYSTEM,
-    contents: withMaterial(material, analyzeTask(kit.language)),
+    contents: withMaterial(markedMaterial(chunks), analyzeTask(kit.language)),
     schema: analyzeSchema,
   });
   const existing = await db.concepts.where("kitId").equals(kitId).toArray();
   const byName = new Map(existing.map((c) => [norm(c.name), c]));
   const concepts: Concept[] = res.concepts.map((c, order) => {
+    const chunkKeys = [...new Set((c.chunks ?? []).filter((i) => Number.isInteger(i) && i >= 0 && i < chunks.length).map((i) => chunks[i].key))];
     const prev = byName.get(norm(c.name));
     return prev
-      ? { ...prev, summary: c.summary, order }
-      : { id: newId(), kitId, name: c.name, summary: c.summary, order, srs: newCard(), attempts: 0, correct: 0, mastery: 0 };
+      ? { ...prev, summary: c.summary, order, chunkKeys }
+      : { id: newId(), kitId, name: c.name, summary: c.summary, order, srs: newCard(), attempts: 0, correct: 0, mastery: 0, chunkKeys };
   });
   const keep = new Set(concepts.map((c) => c.id));
   await db.transaction("rw", db.concepts, db.kits, async () => {
@@ -193,7 +237,7 @@ export async function analyzeKit(kitId: string, signal?: AbortSignal): Promise<v
 
 export async function generateFlashcards(kitId: string, opts: { count?: number; focus?: string; signal?: AbortSignal } = {}) {
   const kit = await kitOrThrow(kitId);
-  const material = await materialFor(kitId);
+  const ctx = await kitContext(kitId, "smart", SYSTEM, opts.signal);
   const concepts = await db.concepts.where("kitId").equals(kitId).sortBy("order");
   const existing = await db.flashcards.where("kitId").equals(kitId).toArray();
   const res = await generateJson<FlashcardResult>({
@@ -202,8 +246,8 @@ export async function generateFlashcards(kitId: string, opts: { count?: number; 
     kitId,
     signal: opts.signal,
     system: SYSTEM,
-    contents: withMaterial(
-      material,
+    config: ctx.config,
+    contents: ctx.contents(
       flashcardTask({
         language: kit.language,
         count: opts.count ?? 24,
@@ -274,20 +318,29 @@ export async function generateSmartQuestions(
   opts: { count?: number; steer?: string; types?: ("mcq" | "tf" | "short")[]; signal?: AbortSignal } = {},
 ): Promise<Question[]> {
   const kit = await kitOrThrow(kitId);
-  const material = await materialFor(kitId);
   const concepts = await db.concepts.where("kitId").equals(kitId).toArray();
   const previous = await db.questions.where("kitId").equals(kitId).toArray();
+  // Big kit: send only the sections that teach the target concepts. Small kit: all of it, cached.
+  const full = await materialFor(kitId);
+  const byName = new Map(concepts.map((c) => [norm(c.name), c]));
+  const focused = focusMaterial(
+    chunkMaterial(full),
+    targets.map((t) => byName.get(norm(t.name))?.chunkKeys),
+  );
+  const ctx: KitContext = focused
+    ? { material: focused, contents: (task) => withMaterial(focused, task), config: {} }
+    : await kitContext(kitId, "smart", SYSTEM, opts.signal);
   const res = await generateJson<QuestionResult>({
     role: "smart",
     task: "smart-questions",
     kitId,
     signal: opts.signal,
     system: SYSTEM,
-    contents: withMaterial(
-      material,
+    config: ctx.config,
+    contents: ctx.contents(
       questionTask({
         language: kit.language,
-        count: opts.count ?? 8,
+        count: opts.count ?? 16,
         targets,
         types: opts.types ?? ["mcq", "short", "tf"],
         avoid: previous.map((q) => q.prompt),
@@ -308,7 +361,7 @@ export async function generateTestQuestions(
   opts: { count: number; types: ("mcq" | "tf" | "short")[]; focus?: string; signal?: AbortSignal },
 ): Promise<Question[]> {
   const kit = await kitOrThrow(kitId);
-  const material = await materialFor(kitId);
+  const ctx = await kitContext(kitId, "smart", SYSTEM, opts.signal);
   const concepts = await db.concepts.where("kitId").equals(kitId).sortBy("order");
   const previous = await db.questions.where("[kitId+origin]").equals([kitId, "test"]).toArray();
   const res = await generateJson<QuestionResult>({
@@ -317,8 +370,8 @@ export async function generateTestQuestions(
     kitId,
     signal: opts.signal,
     system: SYSTEM,
-    contents: withMaterial(
-      material,
+    config: ctx.config,
+    contents: ctx.contents(
       questionTask({
         language: kit.language,
         count: opts.count,
@@ -377,7 +430,7 @@ export async function gradeShortAnswers(kitId: string, items: ShortAnswerItem[],
 
 export async function generateDocument(kitId: string, type: "guide" | "summary", signal?: AbortSignal): Promise<Output> {
   const kit = await kitOrThrow(kitId);
-  const material = await materialFor(kitId);
+  const ctx = await kitContext(kitId, "smart", SYSTEM, signal);
   const concepts = await db.concepts.where("kitId").equals(kitId).sortBy("order");
   const text = await generateText({
     role: "smart",
@@ -385,8 +438,8 @@ export async function generateDocument(kitId: string, type: "guide" | "summary",
     kitId,
     signal,
     system: SYSTEM,
-    contents: withMaterial(
-      material,
+    config: ctx.config,
+    contents: ctx.contents(
       type === "guide" ? guideTask(kit.language, concepts.map((c) => c.name)) : summaryTask(kit.language),
     ),
   });
@@ -453,7 +506,7 @@ export async function generatePodcast(
 ): Promise<Output> {
   const kit = await kitOrThrow(kitId);
   const settings = getSettings();
-  const material = await materialFor(kitId);
+  const ctx = await kitContext(kitId, "smart", SYSTEM, opts.signal);
   opts.onProgress?.(0, 1, "Writing the script");
   const script = await generateJson<PodcastScript>({
     role: "smart",
@@ -461,8 +514,8 @@ export async function generatePodcast(
     kitId,
     signal: opts.signal,
     system: SYSTEM,
-    contents: withMaterial(
-      material,
+    config: ctx.config,
+    contents: ctx.contents(
       podcastTask({ language: kit.language, minutes: settings.podcastMinutes, hostA: HOSTS[0], hostB: HOSTS[1], focus: opts.focus }),
     ),
     schema: podcastSchema,
@@ -544,15 +597,13 @@ export async function tutorReply(
   signal?: AbortSignal,
 ): Promise<string> {
   const kit = await kitOrThrow(kitId);
-  const material = await materialFor(kitId);
-  // Material stays the first turn so every message in a conversation hits the implicit cache.
+  const system = tutorSystem(socratic, kit.language);
+  const ctx = await kitContext(kitId, "smart", system, signal);
+  // The material is the first turn (cached, or inline as a stable prefix), then the conversation.
   const contents: Content[] = [
-    { role: "user", parts: [{ text: `<material>\n${material}\n</material>` }] },
+    ...(ctx.config.cachedContent ? [] : [{ role: "user", parts: [{ text: `<material>\n${ctx.material}\n</material>` }] }]),
     { role: "model", parts: [{ text: "I've read your material. What would you like to work on?" }] },
     ...history.map((m) => ({ role: m.role, parts: [{ text: m.text }] })),
   ];
-  return streamText(
-    { role: "smart", task: "tutor", kitId, signal, system: tutorSystem(socratic, kit.language), contents },
-    onText,
-  );
+  return streamText({ role: "smart", task: "tutor", kitId, signal, system, config: ctx.config, contents }, onText);
 }
