@@ -6,7 +6,7 @@ import "./index.css";
 import { Layout } from "./components/Layout";
 import { installUsageTracking } from "./lib/usage";
 import { installChangeTracking, startSyncLoop } from "./lib/sync";
-import { db } from "./lib/db";
+import { db, pruneKeptFiles } from "./lib/db";
 import { Spinner } from "./components/ui";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 
@@ -35,12 +35,13 @@ navigator.storage?.persist?.().catch(() => {});
 // Kits left "processing" by a closed tab can't resume; surface them as errors so they can be retried.
 db.kits
   .filter((k) => k.status === "processing")
-  .modify({ status: "error", error: "Processing was interrupted (the tab was closed). Open Sources to retry." })
+  .modify({ status: "error", error: "Processing was interrupted (the tab was closed)." })
   .catch(() => {});
 db.sources
   .filter((s) => s.status === "processing" || s.status === "pending")
-  .modify({ status: "error", error: "Interrupted before it finished. Remove it and add it again." })
+  .modify({ status: "error", error: "Interrupted before it finished." })
   .catch(() => {});
+pruneKeptFiles().catch(() => {});
 
 function RouteBoundary({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();

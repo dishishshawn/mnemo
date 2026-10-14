@@ -2,7 +2,7 @@ import "fake-indexeddb/auto";
 import { describe, expect, it } from "vitest";
 import { costOf, ratesAt } from "./pricing";
 import { applyAnswer, levelOf, pickQuestion, pickTargets, targetDifficulty } from "./smart";
-import type { Concept, Question } from "./db";
+import type { Concept, Question, Source } from "./db";
 import { newCard, review, Rating } from "./srs";
 import { pcmToWav } from "./wav";
 import { decodeAudio, parseJson } from "./gemini";
@@ -398,5 +398,32 @@ describe("shuffleOptions", async () => {
       seen.add(s.answerIndex);
     }
     expect(seen.size).toBe(4);
+  });
+});
+
+describe("retrying sources", async () => {
+  const { matchPicked, retryMode } = await import("./study");
+  const source = (over: Partial<Source>): Source => ({ id: "s1", kitId: "k", kind: "pdf", name: "Ch5.pdf", text: "", status: "error", createdAt: 0, ...over });
+
+  it("retries links and kept files as they are, asks for other files, and skips pasted notes", () => {
+    const kept = new Set(["kept"]);
+    expect(retryMode(source({ kind: "web", url: "https://x.org" }), kept)).toBe("retry");
+    expect(retryMode(source({ id: "kept", size: 10 }), kept)).toBe("retry");
+    expect(retryMode(source({ size: 10 }), kept)).toBe("pick");
+    expect(retryMode(source({ kind: "text", name: "Pasted notes" }), kept)).toBeUndefined();
+    expect(retryMode(source({ size: 10, status: "ready" }), kept)).toBeUndefined();
+  });
+
+  it("matches picked files to failed sources by name, or pairs a single one", () => {
+    const file = (name: string) => new File(["x"], name);
+    const ids = (m: Map<string, File>, files: File[]) => [...m].map(([id, f]) => `${id}:${files.indexOf(f)}`);
+    const picked = [file("ch5.PDF"), file("Starvation.pdf"), file("other.pdf")];
+    const failed = [source({ id: "1", name: "Ch5.pdf" }), source({ id: "2", name: "Starvation.pdf" })];
+    expect(ids(matchPicked(failed, picked), picked)).toEqual(["1:0", "2:1"]);
+    expect(ids(matchPicked([failed[0]], [picked[2]]), [picked[2]])).toEqual(["1:0"]);
+    expect(matchPicked(failed, [picked[2]]).size).toBe(0);
+    const photos = [file("image.jpg"), file("image.jpg")];
+    const failedPhotos = [source({ id: "p1", name: "image.jpg" }), source({ id: "p2", name: "image.jpg" })];
+    expect(ids(matchPicked(failedPhotos, photos), photos)).toEqual(["p1:0", "p2:1"]);
   });
 });

@@ -371,12 +371,75 @@ async function runSync() {
   await b.ctx.close();
 }
 
+const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+
+/** A file Gemini fails to read can be retried: in one tap while it's kept on this device, else by picking it again. */
+async function runRetry() {
+  const { ctx, page } = await device("retry", { width: 390, height: 844 });
+  let failReads = true;
+  await page.route(/generativelanguage\.googleapis\.com/, (route) =>
+    failReads && (route.request().postData() ?? "").includes("image/png")
+      ? route.fulfill({ status: 400, json: { error: { code: 400, message: "Request contains an invalid argument.", status: "INVALID_ARGUMENT" } } })
+      : handle(route),
+  );
+  const shot = (n) => page.screenshot({ path: `${SHOTS}/retry-${n}.png`, fullPage: true });
+  const buildFrom = async (name) => {
+    await page.goto(`${BASE}#/new`);
+    await page.locator('input[type="file"]').setInputFiles({ name, mimeType: "image/png", buffer: PNG });
+    await page.getByRole("button", { name: "Build study kit" }).click();
+    await page.getByText("None of the material could be read.").waitFor({ timeout: 20000 });
+  };
+
+  await page.goto(`${BASE}#/settings`);
+  await page.getByPlaceholder("AIza…").fill("AIzaRETRY-TEST-KEY");
+
+  // Kept file: the kit page offers a plain retry, which reads it, maps the kit and writes cards.
+  await buildFrom("slide.png");
+  await shot("01-kit-failed");
+  failReads = false;
+  await page.getByRole("button", { name: "Try again" }).click();
+  await page.getByText("12 flashcards").waitFor({ timeout: 20000 });
+  await shot("02-kit-retried");
+
+  // A file that wasn't kept (it failed on another device) has to be picked again.
+  failReads = true;
+  await buildFrom("lecture.png");
+  await page.evaluate(
+    () =>
+      new Promise((resolve, reject) => {
+        const open = indexedDB.open("mnemo");
+        open.onsuccess = () => {
+          const tx = open.result.transaction("sourceFiles", "readwrite");
+          tx.objectStore("sourceFiles").clear();
+          tx.oncomplete = () => (open.result.close(), resolve());
+          tx.onerror = () => reject(tx.error);
+        };
+      }),
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "Choose the file again" }).waitFor();
+  await shot("03-kit-needs-file");
+  await page.getByRole("link", { name: "Check sources" }).click();
+  await page.getByText(/Gemini error \(400\)/).waitFor();
+  await shot("04-sources-failed");
+  failReads = false;
+  const [chooser] = await Promise.all([page.waitForEvent("filechooser"), page.getByRole("button", { name: "Choose file" }).click()]);
+  await chooser.setFiles({ name: "lecture.png", mimeType: "image/png", buffer: PNG });
+  await page.getByText(/tokens · read by/).waitFor({ timeout: 20000 });
+  await shot("05-sources-retried");
+  await page.goto(page.url().replace(/\/sources$/, ""));
+  await page.getByText("12 flashcards").waitFor({ timeout: 20000 });
+  await ctx.close();
+}
+
 try {
-  if (process.env.E2E_ONLY !== "sync") {
+  if (process.env.E2E_ONLY === "retry") await runRetry();
+  else if (process.env.E2E_ONLY !== "sync") {
     await run("mobile", { width: 390, height: 844 }, "light");
     await run("desktop-dark", { width: 1280, height: 860 }, "dark");
+    await runRetry();
   }
-  await runSync();
+  if (process.env.E2E_ONLY !== "retry") await runSync();
 } catch (err) {
   console.error("E2E FAILED:", err.message);
   await current?.page.screenshot({ path: `${SHOTS}/${current.name}-FAILED.png`, fullPage: true }).catch(() => {});
@@ -386,7 +449,8 @@ try {
   await browser.close();
 }
 
-const real = errors.filter((e) => !/favicon|manifest|sw\.js|workbox/i.test(e));
+// The retry run fails Gemini reads on purpose; browsers log those responses as errors.
+const real = errors.filter((e) => !/favicon|manifest|sw\.js|workbox/i.test(e) && !/^\[retry\] Failed to load resource: the server responded with a status of 400/.test(e));
 if (real.length) {
   console.error(`\n${real.length} error(s):\n` + real.join("\n"));
   process.exit(1);

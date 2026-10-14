@@ -1,5 +1,6 @@
 import Dexie, { type EntityTable } from "dexie";
 import type { Card as FsrsCard } from "ts-fsrs";
+import type { PdfMode } from "./ingest";
 
 export type SourceKind = "pdf" | "docx" | "pptx" | "image" | "audio" | "video" | "youtube" | "web" | "text";
 export type JobStatus = "pending" | "processing" | "ready" | "error";
@@ -42,6 +43,20 @@ export interface Source {
   /** How the text was obtained, shown to the user ("local", or the model id). */
   via?: string;
   createdAt: number;
+}
+
+/**
+ * The original file of a source that couldn't be read, kept on this device (never synced or
+ * backed up) so it can be retried without picking it again. Deleted once it reads.
+ */
+export interface SourceFile {
+  id: string; // the source's id
+  kitId: string;
+  name: string;
+  type: string;
+  /** Bytes, not a Blob: Safari's IndexedDB can refuse Blobs. */
+  bytes: ArrayBuffer;
+  pdfMode?: PdfMode;
 }
 
 export interface Concept {
@@ -198,6 +213,7 @@ export const db = new Dexie("mnemo") as Dexie & {
   usage: EntityTable<UsageEntry, "id">;
   scores: EntityTable<GameScore, "id">;
   tombstones: EntityTable<Tombstone, "id">;
+  sourceFiles: EntityTable<SourceFile, "id">;
 };
 
 db.version(1).stores({
@@ -239,6 +255,11 @@ db.version(3)
       }),
   );
 
+// v4: files of sources that failed to read, kept for a retry.
+db.version(4).stores({
+  sourceFiles: "id, kitId",
+});
+
 export const newId = () => crypto.randomUUID();
 
 /** Podcast audio as a playable/downloadable Blob, whichever form it was stored in. */
@@ -262,9 +283,18 @@ export const KIT_TABLES = [
 export const SYNC_TABLES = ["folders", "kits", ...KIT_TABLES, "usage"] as const;
 export type SyncTable = (typeof SYNC_TABLES)[number];
 
+/** Drops kept files whose source is gone (removed here or on another device) or has been read since. */
+export async function pruneKeptFiles(): Promise<void> {
+  const ids = await db.sourceFiles.toCollection().primaryKeys();
+  const sources = await db.sources.bulkGet(ids);
+  const stale = ids.filter((_, i) => !sources[i] || sources[i].status === "ready");
+  if (stale.length) await db.sourceFiles.bulkDelete(stale);
+}
+
 export async function deleteKit(kitId: string): Promise<void> {
-  await db.transaction("rw", [db.kits, ...KIT_TABLES.map((t) => db[t])], async () => {
+  await db.transaction("rw", [db.kits, db.sourceFiles, ...KIT_TABLES.map((t) => db[t])], async () => {
     for (const t of KIT_TABLES) await db[t].where("kitId").equals(kitId).delete();
+    await db.sourceFiles.where("kitId").equals(kitId).delete();
     await db.kits.delete(kitId);
   });
 }

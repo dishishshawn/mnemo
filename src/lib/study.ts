@@ -1,4 +1,4 @@
-import { db, newId, type Concept, type Flashcard, type Kit, type Output, type Question, type Source } from "./db";
+import { db, newId, pruneKeptFiles, type Concept, type Flashcard, type Kit, type Output, type Question, type Source } from "./db";
 import { type CacheHandle, createMaterialCache, GeminiError, generateJson, generateText, streamText, synthesizeDialogue, type Role } from "./gemini";
 import { chunkMaterial, focusMaterial, hashText, markedMaterial } from "./material";
 import { ingestFile, ingestWebPage, ingestYouTube, stripFence, type PdfMode } from "./ingest";
@@ -136,6 +136,7 @@ export async function addSources(
   onStatus?: (sourceName: string, status: string) => void,
   signal?: AbortSignal,
 ): Promise<void> {
+  const wasReady = (await db.kits.get(kitId))?.status === "ready";
   await db.kits.update(kitId, { status: "processing", error: undefined });
   const rows: { item: NewSource; source: Source }[] = items.map((item) => {
     const base = { id: newId(), kitId, text: "", status: "pending" as const, createdAt: Date.now() };
@@ -154,7 +155,86 @@ export async function addSources(
     }
   });
   await db.sources.bulkAdd(rows.map((r) => r.source));
+  await readSources(kitId, rows, onStatus, signal);
+  await finishKit(kitId, rows, wasReady, onStatus, signal);
+}
 
+/** Files bigger than this aren't kept after a failed read; retrying them means picking them again. */
+const KEEP_FILE_MAX = 50 * 1024 * 1024;
+
+/** How a failed source can be read again: as it is (a link, or a file kept on this device), or once its file is picked again. */
+export function retryMode(source: Source, kept: ReadonlySet<string>): "retry" | "pick" | undefined {
+  if (source.status !== "error") return undefined;
+  if (source.url || kept.has(source.id)) return "retry";
+  if (source.size !== undefined) return "pick";
+  return undefined; // pasted notes: nothing new to read
+}
+
+/** Pairs files picked again with the failed sources they replace: by name, or as is when there's one of each. */
+export function matchPicked<S extends { id: string; name: string }>(sources: S[], files: File[]): Map<string, File> {
+  const matched = new Map<string, File>();
+  if (sources.length === 1 && files.length === 1) return matched.set(sources[0].id, files[0]);
+  // Same-named files (iOS calls every photo "image.jpg") are handed out one each, in order.
+  const byName = new Map<string, File[]>();
+  for (const f of files) byName.set(f.name.toLowerCase(), [...(byName.get(f.name.toLowerCase()) ?? []), f]);
+  for (const s of sources) {
+    const file = byName.get(s.name.toLowerCase())?.shift();
+    if (file) matched.set(s.id, file);
+  }
+  return matched;
+}
+
+/**
+ * Reads failed sources again, then maps the kit. Links and kept files are read as they are; a
+ * `file` (picked again) replaces the source's file. With nothing to read it just maps the kit again.
+ */
+export async function retrySources(
+  kitId: string,
+  retries: { id: string; file?: File }[],
+  onStatus?: (sourceName: string, status: string) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const wasReady = (await db.kits.get(kitId))?.status === "ready";
+  const rows: { item: NewSource; source: Source }[] = [];
+  for (const { id, file } of retries) {
+    let source = await db.sources.get(id);
+    if (!source) continue;
+    const kept = await db.sourceFiles.get(id);
+    let item: NewSource | undefined;
+    if (file) {
+      item = { type: "file", file, pdfMode: kept?.pdfMode };
+      source = { ...source, kind: kindOf(file), name: file.name, mime: file.type, size: file.size };
+    } else if (source.url) item = source.kind === "youtube" ? { type: "youtube", url: source.url } : { type: "web", url: source.url };
+    else if (kept) item = { type: "file", file: new File([kept.bytes], kept.name, { type: kept.type }), pdfMode: kept.pdfMode };
+    if (!item) continue;
+    await db.sources.update(id, { kind: source.kind, name: source.name, mime: source.mime, size: source.size, status: "pending", error: undefined });
+    rows.push({ item, source });
+  }
+  await db.kits.update(kitId, { status: "processing", error: undefined });
+  await readSources(kitId, rows, onStatus, signal);
+  await finishKit(kitId, rows, wasReady, onStatus, signal);
+  if ((await db.kits.get(kitId))?.status === "ready") await firstFlashcards(kitId, onStatus, signal);
+}
+
+/** A new kit's first flashcards, once it's ready; skipped if it already has some. */
+export async function firstFlashcards(
+  kitId: string,
+  onStatus?: (sourceName: string, status: string) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  if ((await db.kits.get(kitId))?.status !== "ready") return;
+  if (await db.flashcards.where("kitId").equals(kitId).count()) return;
+  onStatus?.("kit", "Writing flashcards");
+  await generateFlashcards(kitId, { signal });
+}
+
+/** Reads each source in turn. A file that fails is kept on this device so it can be retried. */
+async function readSources(
+  kitId: string,
+  rows: { item: NewSource; source: Source }[],
+  onStatus?: (sourceName: string, status: string) => void,
+  signal?: AbortSignal,
+): Promise<void> {
   for (const { item, source } of rows) {
     if (signal?.aborted) break;
     const report = (status: string) => onStatus?.(source.name, status);
@@ -171,8 +251,11 @@ export async function addSources(
               : { text: item.text, via: "pasted" };
       if (!result.text.trim()) throw new Error("No text could be extracted.");
       await db.sources.update(source.id, { text: result.text, via: result.via, status: "ready" });
+      await db.sourceFiles.delete(source.id);
     } catch (err) {
       await db.sources.update(source.id, { status: "error", error: (err as Error).message });
+      // Only a deleted kit cancels this; its files shouldn't outlive it.
+      if (item.type === "file" && !signal?.aborted) await keepFile(kitId, source.id, item);
     }
   }
 
@@ -183,11 +266,39 @@ export async function addSources(
       .filter((s) => s.status === "pending" || s.status === "processing")
       .modify({ status: "error", error: "Cancelled before it was read." });
   }
+  await pruneKeptFiles();
+}
+
+async function keepFile(kitId: string, sourceId: string, item: Extract<NewSource, { type: "file" }>): Promise<void> {
+  if (item.file.size > KEEP_FILE_MAX) return;
+  try {
+    const bytes = await item.file.arrayBuffer();
+    if (!(await db.sources.get(sourceId))) return; // removed while it was being read
+    await db.sourceFiles.put({ id: sourceId, kitId, name: item.file.name, type: item.file.type, bytes, pdfMode: item.pdfMode });
+  } catch (err) {
+    console.warn("Couldn't keep the file for a retry", err);
+  }
+}
+
+/** Maps the kit after a read. A kit that was ready and got nothing new is left as it was. */
+async function finishKit(
+  kitId: string,
+  rows: { source: Source }[],
+  wasReady: boolean,
+  onStatus?: (sourceName: string, status: string) => void,
+  signal?: AbortSignal,
+): Promise<void> {
   // An existing kit stays usable if adding to it fails; the error surfaces on the job instead.
   const established = (await db.concepts.where("kitId").equals(kitId).count()) > 0;
   const ready = await db.sources.where("kitId").equals(kitId).filter((s) => s.status === "ready").count();
+  const ids = new Set(rows.map((r) => r.source.id));
+  const fresh = await db.sources.where("kitId").equals(kitId).filter((s) => ids.has(s.id) && s.status === "ready").count();
   if (!ready) {
     await db.kits.update(kitId, { status: "error", error: "None of the material could be read." });
+    return;
+  }
+  if (wasReady && !fresh) {
+    await db.kits.update(kitId, { status: "ready" });
     return;
   }
   try {

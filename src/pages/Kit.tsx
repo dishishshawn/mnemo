@@ -6,20 +6,23 @@ import {
   ClipboardCheck,
   FileStack,
   FileText,
+  FileUp,
   Gamepad2,
   Headphones,
   Layers,
   MessageCircle,
   Mic,
   PenLine,
+  RotateCcw,
   ScrollText,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ExamDateField, PlanCard, useStudyPlan } from "../components/ExamPlan";
 import { PenguinSays } from "../components/Penguin";
+import { useRetrySources } from "../components/RetrySources";
 import { LanguageSelect } from "../components/LanguageSelect";
-import { Badge, Card, ErrorBox, inputClass, LinkButton, Progress, Spinner } from "../components/ui";
+import { Badge, Button, Card, ErrorBox, inputClass, LinkButton, Progress, Spinner } from "../components/ui";
 import { db } from "../lib/db";
 import { overallMastery, useConcepts, useKit } from "../lib/hooks";
 import { useJob } from "../lib/jobs";
@@ -29,6 +32,7 @@ export default function KitPage() {
   const { kitId, kit } = useKit();
   const concepts = useConcepts(kitId);
   const job = useJob(`kit:${kitId}`);
+  const retry = useRetrySources(kitId);
   const [editing, setEditing] = useState(false);
   const counts = useLiveQuery(async () => {
     const [cards, sources, outputs, tests] = await Promise.all([
@@ -61,6 +65,9 @@ export default function KitPage() {
     );
 
   const building = kit.status === "processing";
+  // A kit that failed can be retried if a source can be read again, or if it has read material to map again.
+  const canRetry = retry.failed.length > 0 || !!counts?.sources.some((s) => s.status === "ready");
+  const toPick = retry.failed.filter((s) => retry.modeOf(s) === "pick").length;
   const mastery = overallMastery(concepts ?? []);
   const base = `/kit/${kitId}`;
 
@@ -114,11 +121,26 @@ export default function KitPage() {
       {kit.status === "error" && (
         <div className="mb-6">
           <ErrorBox error={kit.error ?? "Something went wrong building this kit."} />
-          <LinkButton to={`${base}/sources`} variant="secondary" className="mt-3">
-            Check sources
-          </LinkButton>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {canRetry && (
+              <Button onClick={() => retry.retry()} disabled={retry.busy}>
+                {toPick ? <FileUp className="size-4" /> : <RotateCcw className="size-4" />}
+                {toPick ? `Choose ${toPick > 1 ? "the files" : "the file"} again` : "Try again"}
+              </Button>
+            )}
+            <LinkButton to={`${base}/sources`} variant="secondary">
+              Check sources
+            </LinkButton>
+          </div>
+          {!!toPick && (
+            <p className="mt-2 text-xs text-muted">
+              {toPick > 1 ? "These files weren't" : "This file wasn't"} kept on this device, so pick {toPick > 1 ? "them" : "it"} again to retry.
+            </p>
+          )}
         </div>
       )}
+      {retry.notice && <div className="mb-6"><ErrorBox error={retry.notice} /></div>}
+      {retry.picker}
       {job?.error && <div className="mb-6"><ErrorBox error={job.error} /></div>}
 
       {!building && kit.status === "ready" && (

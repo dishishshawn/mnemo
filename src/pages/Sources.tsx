@@ -1,7 +1,8 @@
 import clsx from "clsx";
 import { useLiveQuery } from "dexie-react-hooks";
-import { ChevronDown, Plus, RefreshCw, Trash } from "lucide-react";
+import { ChevronDown, FileUp, Plus, RefreshCw, RotateCcw, Trash } from "lucide-react";
 import { useState } from "react";
+import { useRetrySources } from "../components/RetrySources";
 import { KIND_ICON, SourcePicker } from "../components/SourcePicker";
 import { Badge, Button, Card, ErrorBox, Modal, PageHeader, Spinner, MissingKit } from "../components/ui";
 import { db } from "../lib/db";
@@ -16,6 +17,7 @@ export default function Sources() {
   const [open, setOpen] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [items, setItems] = useState<NewSource[]>([]);
+  const retry = useRetrySources(kitId);
   const busy = !!job && !job.done;
 
   const add = () => {
@@ -41,6 +43,7 @@ export default function Sources() {
   const remove = async (id: string) => {
     if (!confirm("Remove this source? Existing flashcards and questions are kept.")) return;
     await db.sources.delete(id);
+    await db.sourceFiles.delete(id);
   };
 
   if (kit === null) return <MissingKit />;
@@ -56,6 +59,11 @@ export default function Sources() {
         back={`/kit/${kitId}`}
         actions={
           <>
+            {retry.failed.length > 1 && (
+              <Button variant="secondary" size="sm" onClick={() => retry.retry()} disabled={busy}>
+                <RotateCcw className="size-4" /> Retry failed
+              </Button>
+            )}
             <Button variant="secondary" size="sm" onClick={reanalyze} loading={busy} title="Re-map concepts after adding or removing material">
               <RefreshCw className="size-4" /> Re-map concepts
             </Button>
@@ -71,6 +79,8 @@ export default function Sources() {
         </Card>
       )}
       {job?.error && <div className="mb-4"><ErrorBox error={job.error} /></div>}
+      {retry.notice && <div className="mb-4"><ErrorBox error={retry.notice} /></div>}
+      {retry.picker}
 
       <div className="space-y-2">
         {sources.map((s) => (
@@ -79,11 +89,30 @@ export default function Sources() {
               <span className="text-brand-600 dark:text-brand-300">{KIND_ICON[s.kind]}</span>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{s.name}</div>
-                <div className="text-xs text-muted">
-                  {s.status === "ready" ? `${Math.round(s.text.length / 4).toLocaleString()} tokens · read by ${s.via ?? "?"}` : s.status}
+                <div className={clsx("truncate text-xs", s.status === "error" ? "text-blush-700 dark:text-blush-200" : "text-muted")}>
+                  {s.status === "ready" ? `${Math.round(s.text.length / 4).toLocaleString()} tokens · read by ${s.via ?? "?"}` : s.status === "error" ? (s.error ?? "error") : s.status}
                 </div>
               </div>
-              {s.status === "error" && <Badge tone="rose">error</Badge>}
+              {s.status === "error" && (
+                <span className="hidden sm:inline">
+                  <Badge tone="rose">error</Badge>
+                </span>
+              )}
+              {retry.modeOf(s) && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={busy}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    retry.retry([s]);
+                  }}
+                  title={retry.modeOf(s) === "pick" ? "This file isn't kept on this device; pick it again to retry" : "Read this source again"}
+                >
+                  {retry.modeOf(s) === "pick" ? <FileUp className="size-4" /> : <RotateCcw className="size-4" />}
+                  {retry.modeOf(s) === "pick" ? "Choose file" : "Retry"}
+                </Button>
+              )}
               {(s.status === "processing" || s.status === "pending") && <Spinner />}
               <button
                 onClick={(e) => {
