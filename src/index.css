@@ -30,8 +30,23 @@
 }
 
 :root {
-  /* Height of the sticky app bar (py-3 + 36px logo + border); one-screen pages subtract it. */
-  --appbar: 61.5px;
+  /* Height of the sticky app bar (py-3 + size-9 logo + border); one-screen pages subtract it.
+     Kept in rem so it tracks the desktop font-size step below. */
+  --appbar: calc(3.75rem + 1.5px);
+}
+
+/* Bigger by default on large screens: everything is rem-based, so this is the same as browser
+   zoom (125% on laptops and landscape tablets, 150% on desktop monitors). Breakpoints are
+   unaffected because media queries use the browser's base font size, not this one. */
+@media (min-width: 64rem) {
+  html {
+    font-size: 125%;
+  }
+}
+@media (min-width: 80rem) {
+  html {
+    font-size: 150%;
+  }
 }
 
 :root {

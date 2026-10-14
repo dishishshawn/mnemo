@@ -206,7 +206,7 @@ function TestView({ run, onExit }: { run: TestRun; onExit: () => void }) {
 
   return (
     <div className="space-y-4">
-      <div className="sticky top-[57px] z-30 -mx-4 flex items-center justify-between gap-3 border-b border-theme bg-[var(--bg)]/90 px-4 py-2 backdrop-blur">
+      <div className="sticky top-[calc(var(--appbar)-4.5px)] z-30 -mx-4 flex items-center justify-between gap-3 border-b border-theme bg-[var(--bg)]/90 px-4 py-2 backdrop-blur">
         {finished ? (
           <span className="text-lg font-bold">Score: {Math.round((run.score ?? 0) * 100)}%</span>
         ) : (
