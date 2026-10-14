@@ -47,7 +47,7 @@ function ai(): GoogleGenAI {
 export class GeminiError extends Error {
   constructor(
     message: string,
-    readonly code: "no-key" | "bad-key" | "quota" | "blocked" | "truncated" | "bad-json" | "api" = "api",
+    readonly code: "no-key" | "bad-key" | "quota" | "busy" | "blocked" | "truncated" | "bad-json" | "api" = "api",
   ) {
     super(message);
   }
@@ -69,6 +69,12 @@ export interface CallOptions {
   /** Keep a cut-off answer (with a note) instead of failing. For transcripts, where most is better than none. */
   allowTruncated?: boolean;
   config?: GenerateContentConfig;
+  /**
+   * The material held in `config.cachedContent`. A cache belongs to one model, so a stand-in model
+   * (used when the configured one is overloaded) gets this inline instead. Without it, a cached
+   * call can only retry its own model.
+   */
+  cachedMaterial?: string;
   signal?: AbortSignal;
 }
 
@@ -99,10 +105,47 @@ function statusOf(err: unknown): number | undefined {
   return e?.status ?? e?.code;
 }
 
-function friendly(err: unknown): Error {
-  if (err instanceof GeminiError) return err;
+function messageOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Capacity trouble on Google's side ("This model is currently experiencing high demand",
+ * "The model is overloaded"). Matched on the text too, because it doesn't always arrive as a 503.
+ */
+export function isOverloaded(err: unknown): boolean {
   const status = statusOf(err);
-  const msg = err instanceof Error ? err.message : String(err);
+  if (status === 429) return false;
+  return (
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504 ||
+    /high demand|overloaded|\bUNAVAILABLE\b|try again later/i.test(messageOf(err))
+  );
+}
+
+/** Failures another model may not share: capacity, per-model rate limits, or a model this key can't use. */
+function modelSpecific(err: unknown): boolean {
+  const status = statusOf(err);
+  return isOverloaded(err) || status === 429 || status === 403 || status === 404;
+}
+
+const labelOf = (model: string) => findModel(model)?.label ?? model;
+
+function friendly(err: unknown, tried: string[] = []): Error {
+  if (err instanceof GeminiError) return err;
+  if (err instanceof Error && err.name === "AbortError") return err;
+  const status = statusOf(err);
+  const msg = messageOf(err);
+  if (isOverloaded(err)) {
+    const names = tried.map(labelOf);
+    const which = names.length > 1 ? ` Mnemo tried ${names.slice(0, -1).join(", ")} and ${names.at(-1)}.` : "";
+    return new GeminiError(
+      `Google's Gemini servers are busy right now. That's on Google's side, not your key.${which} Try again in a minute.`,
+      "busy",
+    );
+  }
   if (status === 400 && /api key/i.test(msg)) return new GeminiError("Gemini rejected the API key. Check it in Settings.", "bad-key");
   if (status === 403) return new GeminiError("This API key isn't allowed to use that model. Check the key in Settings.", "bad-key");
   if (status === 429)
@@ -110,29 +153,148 @@ function friendly(err: unknown): Error {
       "Gemini rate limit hit. On the free tier this resets daily. Wait a minute and try again, or enable billing on the key.",
       "quota",
     );
-  if (err instanceof Error && err.name === "AbortError") return err;
   return new GeminiError(`Gemini error${status ? ` (${status})` : ""}: ${msg}`);
 }
 
-/** Retries transient failures, and drops an unsupported thinking level instead of failing. */
-async function withRetry<T>(fn: (dropThinking: boolean) => Promise<T>, signal?: AbortSignal): Promise<T> {
-  let dropThinking = false;
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await fn(dropThinking);
-    } catch (err) {
-      if (signal?.aborted) throw err;
-      const status = statusOf(err);
-      const msg = err instanceof Error ? err.message : "";
-      if (status === 400 && !dropThinking && /thinking/i.test(msg)) {
-        dropThinking = true;
-        continue;
+/**
+ * Stand-ins for each model, same kind, best first. Each Gemini model has its own capacity pool and
+ * its own free-tier quota, so when one is overloaded or rate-limited another usually isn't.
+ */
+const FALLBACKS: Record<string, string[]> = {
+  "gemini-3.8-flash": ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"],
+  "gemini-4-argon": ["gemini-3.8-flash", "gemini-3.5-flash-lite"],
+  "gemini-3.5-flash-lite": ["gemini-3.1-flash-lite", "gemini-3.8-flash"],
+  "gemini-3.1-flash-lite": ["gemini-3.5-flash-lite", "gemini-3.8-flash"],
+  "gemini-2.5-flash-lite": ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite"],
+  "gemini-3.8-flash-lite-tts": ["gemini-3.8-flash-tts"],
+  "gemini-3.8-flash-tts": ["gemini-3.8-flash-lite-tts"],
+};
+
+/** After a model fails this way, later calls try the others first for a while instead of waiting on it again. */
+const TROUBLE_MS = 2 * 60_000;
+const troubleAt = new Map<string, number>();
+
+/** The configured model, then its stand-ins; any that failed in the last two minutes go to the back. */
+export function modelChain(primary: string, now = Date.now()): string[] {
+  const chain = [primary, ...(FALLBACKS[primary] ?? []).filter((m) => m !== primary)];
+  const cooling = (m: string) => now - (troubleAt.get(m) ?? -Infinity) < TROUBLE_MS;
+  return [...chain.filter((m) => !cooling(m)), ...chain.filter(cooling)];
+}
+
+/** Test hook: forget which models recently failed. */
+export function resetModelTrouble(): void {
+  troubleAt.clear();
+}
+
+export interface Attempt {
+  model: string;
+  /** The model's thinking setting was rejected; send without one. */
+  dropThinking: boolean;
+}
+
+const RETRY_DELAYS = [1500, 5000, 12000];
+/** Pause before a second pass over the whole chain, when every model was busy or rate-limited. */
+const SECOND_PASS_DELAY = 8000;
+
+const transient = (err: unknown) => isOverloaded(err) || statusOf(err) === 429;
+
+/**
+ * Runs a call on the configured model and, when Google reports high demand, a per-model rate
+ * limit, or a model this key can't use, moves on to a stand-in model. A momentary overload gets
+ * one quick retry first; with no stand-in available it gets three, spaced out. If every model was
+ * busy or rate-limited, it waits and goes round once more. Returns which model answered so usage
+ * is priced correctly.
+ */
+export async function withFallback<T>(
+  primary: string,
+  fn: (a: Attempt) => Promise<T>,
+  opts: { signal?: AbortSignal; canSwitch?: boolean; sleep?: (ms: number) => Promise<unknown> } = {},
+): Promise<{ value: T; model: string }> {
+  const wait = opts.sleep ?? sleep;
+  const models = opts.canSwitch === false ? [primary] : modelChain(primary);
+  const sameModelRetries = models.length === 1 ? RETRY_DELAYS.length : 1;
+  const passes = models.length > 1 ? 2 : 1;
+  const tried = new Set<string>();
+  let lastErr: unknown;
+  let allTransient = true;
+  for (let pass = 0; pass < passes; pass++) {
+    if (pass > 0) {
+      if (!allTransient) break;
+      await wait(SECOND_PASS_DELAY + Math.random() * 1000);
+    }
+    for (const model of models) {
+      tried.add(model);
+      let dropThinking = false;
+      let retries = pass === 0 ? 0 : sameModelRetries;
+      for (;;) {
+        try {
+          const value = await fn({ model, dropThinking });
+          troubleAt.delete(model);
+          if (model !== primary) console.info(`Gemini: ${primary} unavailable, answered by ${model}`);
+          return { value, model };
+        } catch (err) {
+          if (opts.signal?.aborted) throw err;
+          lastErr = err;
+          const status = statusOf(err);
+          if (status === 400 && !dropThinking && /thinking/i.test(messageOf(err))) {
+            dropThinking = true;
+            continue;
+          }
+          if (!modelSpecific(err)) throw friendly(err);
+          if (!transient(err)) allTransient = false;
+          // A rate limit with a stand-in available moves on at once; waiting wouldn't help much.
+          const retrySame = (isOverloaded(err) || (status === 429 && models.length === 1)) && retries < sameModelRetries;
+          if (!retrySame) {
+            // Only a model we actually gave up on goes to the back of the line for later calls.
+            troubleAt.set(model, Date.now());
+            break;
+          }
+          await wait(RETRY_DELAYS[retries++] + Math.random() * 500);
+        }
       }
-      const transient = status === 429 || status === 500 || status === 503 || status === 504;
-      if (!transient || attempt >= 3) throw friendly(err);
-      await sleep([2000, 6000, 15000][attempt]);
     }
   }
+  throw friendly(lastErr, [...tried]);
+}
+
+/** Retries a call that isn't tied to a model (file uploads). */
+async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  return (await withFallback("files", () => fn(), { signal, canSwitch: false })).value;
+}
+
+/** Puts the material back in front of the conversation, the way an uncached call sends it. */
+export function inlineMaterial(contents: Content[] | string, material: string): Content[] {
+  const part: Part = { text: `<material>\n${material}\n</material>` };
+  const list: Content[] = typeof contents === "string" ? [{ role: "user", parts: [{ text: contents }] }] : contents;
+  const [first, ...rest] = list;
+  if (first?.role === "user") return [{ ...first, parts: [part, ...(first.parts ?? [])] }, ...rest];
+  return [{ role: "user", parts: [part] }, ...list];
+}
+
+/**
+ * Sends a text request through the fallback chain. On a stand-in model the explicit cache (which
+ * belongs to the configured model) is dropped and the material and system instruction go inline.
+ */
+async function send<T>(
+  opts: CallOptions,
+  request: (model: string, req: { contents: Content[] | string; config: GenerateContentConfig }) => Promise<T>,
+): Promise<{ value: T; model: string }> {
+  const { model: primary, thinking } = modelFor(opts.role);
+  const cached = !!opts.config?.cachedContent;
+  const canSwitch = !cached || opts.cachedMaterial !== undefined;
+  return withFallback(
+    primary,
+    ({ model, dropThinking }) => {
+      const level = dropThinking ? "default" : thinking;
+      if (cached && model !== primary) {
+        const { cachedContent: _, ...config } = opts.config!;
+        const uncached = { ...opts, config };
+        return request(model, { contents: inlineMaterial(opts.contents, opts.cachedMaterial!), config: buildConfig(uncached, level) });
+      }
+      return request(model, { contents: opts.contents, config: buildConfig(opts, level) });
+    },
+    { signal: opts.signal, canSwitch },
+  );
 }
 
 function checkFinish(res: GenerateContentResponse): void {
@@ -146,16 +308,7 @@ function checkFinish(res: GenerateContentResponse): void {
 }
 
 export async function generateText(opts: CallOptions): Promise<string> {
-  const { model, thinking } = modelFor(opts.role);
-  const res = await withRetry(
-    (drop) =>
-      ai().models.generateContent({
-        model,
-        contents: opts.contents,
-        config: buildConfig(opts, drop ? "default" : thinking),
-      }),
-    opts.signal,
-  );
+  const { value: res, model } = await send(opts, (model, req) => ai().models.generateContent({ model, ...req }));
   record(model, opts, res.usageMetadata);
   checkFinish(res);
   const text = res.text ?? "";
@@ -167,19 +320,12 @@ export async function generateText(opts: CallOptions): Promise<string> {
 }
 
 export async function generateJson<T>(opts: CallOptions & { schema: object }): Promise<T> {
-  const { model, thinking } = modelFor(opts.role);
-  const res = await withRetry(
-    (drop) =>
-      ai().models.generateContent({
-        model,
-        contents: opts.contents,
-        config: {
-          ...buildConfig(opts, drop ? "default" : thinking),
-          responseMimeType: "application/json",
-          responseJsonSchema: opts.schema,
-        },
-      }),
-    opts.signal,
+  const { value: res, model } = await send(opts, (model, req) =>
+    ai().models.generateContent({
+      model,
+      contents: req.contents,
+      config: { ...req.config, responseMimeType: "application/json", responseJsonSchema: opts.schema },
+    }),
   );
   record(model, opts, res.usageMetadata);
   checkFinish(res);
@@ -201,20 +347,19 @@ export function parseJson<T>(text: string): T {
 }
 
 export async function streamText(opts: CallOptions, onText: (full: string) => void): Promise<string> {
-  const { model, thinking } = modelFor(opts.role);
-  const stream = await withRetry(
-    (drop) =>
-      ai().models.generateContentStream({
-        model,
-        contents: opts.contents,
-        config: buildConfig(opts, drop ? "default" : thinking),
-      }),
-    opts.signal,
-  );
+  // Overload errors can arrive as the stream's first event rather than as the HTTP status, so the
+  // first chunk is read inside the fallback: an error there moves on to a stand-in model.
+  const { value: opened, model } = await send(opts, async (model, req) => {
+    const stream = await ai().models.generateContentStream({ model, ...req });
+    const it = stream[Symbol.asyncIterator]();
+    return { it, first: await it.next() };
+  });
+  const { it } = opened;
   let full = "";
   let usage: UsageMetadata | undefined;
   try {
-    for await (const chunk of stream) {
+    for (let step = opened.first; !step.done; step = await it.next()) {
+      const chunk = step.value;
       if (chunk.usageMetadata) usage = chunk.usageMetadata;
       const t = chunk.text;
       if (t) {
@@ -254,10 +399,10 @@ export async function synthesizeDialogue(opts: {
   kitId?: string;
   signal?: AbortSignal;
 }): Promise<SpeechResult> {
-  const model = env.getSettings().ttsModel;
   const callOpts: CallOptions = { role: "fast", task: opts.task, kitId: opts.kitId, contents: "" };
-  const res = await withRetry(
-    () =>
+  const { value: res, model } = await withFallback(
+    env.getSettings().ttsModel,
+    ({ model }) =>
       ai().models.generateContent({
         model,
         contents: [
@@ -279,7 +424,7 @@ export async function synthesizeDialogue(opts: {
           },
         },
       }),
-    opts.signal,
+    { signal: opts.signal },
   );
   record(model, callOpts, res.usageMetadata);
   checkFinish(res);

@@ -50,7 +50,7 @@ export const MODELS: ModelPrice[] = [
     id: "gemini-2.5-flash-lite",
     label: "Gemini 2.5 Flash-Lite",
     kind: "text",
-    note: "Oldest and cheapest; access is restricted on some accounts.",
+    note: "Retired for new API keys (Google returns 404); older keys may still use it.",
     rates: { input: 0.1, audioInput: 0.3, cachedInput: 0.01, output: 0.4 },
   },
   {

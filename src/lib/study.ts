@@ -68,6 +68,8 @@ interface KitContext {
   /** Builds the contents for a task: just the task when the material is cached, else material + task. */
   contents: (task: string) => Content[];
   config: { cachedContent?: string };
+  /** Set when the material is cached, so a stand-in model can get it inline. */
+  cachedMaterial?: string;
 }
 
 const caches = new Map<string, CacheHandle & { hash: string }>();
@@ -98,7 +100,7 @@ async function kitContext(kitId: string, role: Role, system: string, signal?: Ab
     } else cacheRefusedAt.set(key, Date.now());
   }
   return handle
-    ? { material, contents: taskOnly, config: { cachedContent: handle.name } }
+    ? { material, contents: taskOnly, config: { cachedContent: handle.name }, cachedMaterial: material }
     : { material, contents: (task) => withMaterial(material, task), config: {} };
 }
 
@@ -251,6 +253,7 @@ export async function generateFlashcards(kitId: string, opts: { count?: number; 
     signal: opts.signal,
     system: SYSTEM,
     config: ctx.config,
+    cachedMaterial: ctx.cachedMaterial,
     contents: ctx.contents(
       flashcardTask({
         language: kit.language,
@@ -355,6 +358,7 @@ export async function generateSmartQuestions(
     signal: opts.signal,
     system: SYSTEM,
     config: ctx.config,
+    cachedMaterial: ctx.cachedMaterial,
     contents: ctx.contents(
       questionTask({
         language: kit.language,
@@ -389,6 +393,7 @@ export async function generateTestQuestions(
     signal: opts.signal,
     system: SYSTEM,
     config: ctx.config,
+    cachedMaterial: ctx.cachedMaterial,
     contents: ctx.contents(
       questionTask({
         language: kit.language,
@@ -483,6 +488,7 @@ export async function generateDocument(kitId: string, type: "guide" | "summary",
     signal,
     system: SYSTEM,
     config: ctx.config,
+    cachedMaterial: ctx.cachedMaterial,
     contents: ctx.contents(
       type === "guide" ? guideTask(kit.language, concepts.map((c) => c.name)) : summaryTask(kit.language),
     ),
@@ -559,6 +565,7 @@ export async function generatePodcast(
     signal: opts.signal,
     system: SYSTEM,
     config: ctx.config,
+    cachedMaterial: ctx.cachedMaterial,
     contents: ctx.contents(
       podcastTask({ language: kit.language, minutes: settings.podcastMinutes, hostA: HOSTS[0], hostB: HOSTS[1], focus: opts.focus }),
     ),
@@ -649,5 +656,5 @@ export async function tutorReply(
     { role: "model", parts: [{ text: "I've read your material. What would you like to work on?" }] },
     ...history.map((m) => ({ role: m.role, parts: [{ text: m.text }] })),
   ];
-  return streamText({ role: "smart", task: "tutor", kitId, signal, system, config: ctx.config, contents }, onText);
+  return streamText({ role: "smart", task: "tutor", kitId, signal, system, config: ctx.config, cachedMaterial: ctx.cachedMaterial, contents }, onText);
 }

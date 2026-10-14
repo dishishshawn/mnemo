@@ -74,7 +74,7 @@ file / link / notes ──► ingest once ──► Markdown text (IndexedDB)
 
 | Path                     | What                                                   |
 | ------------------------ | ------------------------------------------------------ |
-| `src/lib/gemini.ts`      | Gemini client: retries, thinking level, cost logging   |
+| `src/lib/gemini.ts`      | Gemini client: retries, model fallback, cost logging   |
 | `src/lib/prompts.ts`     | Every prompt and JSON schema                           |
 | `src/lib/ingest.ts`      | Turning sources into text                              |
 | `src/lib/study.ts`       | Kit building and each generator                        |
