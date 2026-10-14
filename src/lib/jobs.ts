@@ -65,5 +65,11 @@ export function useJob(key: string): Job | undefined {
   return jobs.get(key);
 }
 
+/** Whether any job is still running (reloading the page would cut it off). */
+export function useJobsRunning(): boolean {
+  useSyncExternalStore(subscribe, () => version);
+  return [...jobs.values()].some((j) => !j.done);
+}
+
 /** Test hook: read a job without subscribing. */
 export const __peek = (key: string): Omit<Job, "controller"> | undefined => jobs.get(key);

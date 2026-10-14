@@ -10,7 +10,9 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
-      registerType: "autoUpdate",
+      // "prompt": a new version waits until the user taps Update (components/UpdateButton.tsx),
+      // so a reload never cuts off a kit being built.
+      registerType: "prompt",
       includeAssets: ["favicon.ico", "icon-64.png", "icon-180.png", "logo.png", "penguin/*.png"],
       manifest: {
         name: "Mnemo",

@@ -8,6 +8,7 @@ import { formatUsd } from "../lib/pricing";
 import { useSettings } from "../lib/settings";
 import { monthStart } from "../lib/usage";
 import { useSyncStatus } from "../lib/sync";
+import { UpdateButton } from "./UpdateButton";
 
 function useTheme() {
   const { theme } = useSettings();
@@ -34,17 +35,17 @@ export function Layout({ children }: { children: ReactNode }) {
 
   const navItem = ({ isActive }: { isActive: boolean }) =>
     clsx(
-      "flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition",
+      "flex items-center gap-2 rounded-xl px-2.5 py-2 text-sm font-medium transition sm:px-3",
       isActive ? "bg-brand-100 text-brand-800 dark:bg-brand-900/40 dark:text-brand-200" : "text-muted hover:text-[var(--text)]",
     );
 
   return (
     <div className="min-h-dvh">
       <header className="sticky top-0 z-40 border-b border-theme bg-[var(--bg)]/85 backdrop-blur">
-        <div className="mx-auto flex max-w-5xl items-center gap-2 px-4 py-3">
-          <Link to="/" className="mr-2 flex items-center gap-2 font-bold tracking-tight">
+        <div className="mx-auto flex max-w-5xl items-center gap-1.5 px-4 py-3 sm:gap-2">
+          <Link to="/" className="flex shrink-0 items-center gap-2 font-bold tracking-tight sm:mr-2">
             <img src={`${import.meta.env.BASE_URL}logo.png`} alt="" className="size-9 rounded-xl border-[1.5px] border-brand-200 dark:border-brand-800" />
-            <span className="text-lg font-extrabold text-brand-900 dark:text-brand-100">Mnemo</span>
+            <span className="text-lg font-extrabold text-brand-900 max-[374px]:hidden dark:text-brand-100">Mnemo</span>
             <span className="hidden gap-0.5 text-[10px] leading-none sm:inline-flex" aria-hidden>
               <span className="sparkle">✦</span>
               <span className="sparkle">✦</span>
@@ -61,6 +62,7 @@ export function Layout({ children }: { children: ReactNode }) {
               <span className="hidden sm:inline">New kit</span>
             </NavLink>
           </nav>
+          <UpdateButton />
           {sync.enabled && (
             <NavLink to="/settings" className="rounded-lg p-2 text-muted hover:text-[var(--text)]" title={sync.phase === "error" ? `Sync problem: ${sync.error}` : sync.phase === "syncing" ? "Syncing" : "Synced"}>
               {sync.phase === "syncing" ? (

@@ -20,13 +20,14 @@ export function Button({
   children,
   disabled,
   ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: "sm" | "md" | "lg"; loading?: boolean }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: "xs" | "sm" | "md" | "lg"; loading?: boolean }) {
   return (
     <button
       {...rest}
       disabled={disabled || loading}
       className={clsx(
         "inline-flex items-center justify-center gap-2 rounded-full font-semibold transition active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-60",
+        size === "xs" && "px-2.5 py-1 text-xs",
         size === "sm" && "px-3 py-1.5 text-sm",
         size === "md" && "px-4 py-2.5 text-sm",
         size === "lg" && "px-5 py-3 text-base",
