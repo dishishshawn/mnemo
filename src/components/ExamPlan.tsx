@@ -4,6 +4,7 @@ import { CalendarCheck, CalendarClock } from "lucide-react";
 import { Link } from "react-router";
 import { db, type Kit } from "../lib/db";
 import { buildPlan, formatDaysLeft, TARGET_RETENTION, todayKey, type StudyPlan } from "../lib/plan";
+import { Penguin, type Mood } from "./Penguin";
 import { Badge, Card, inputClass, Progress } from "./ui";
 
 /** The kit's study plan, recomputed whenever its concepts or attempts change. Null without an exam date. */
@@ -54,8 +55,10 @@ export function PlanBadge({ plan }: { plan: StudyPlan }) {
 export function PlanCard({ kitId, plan }: { kitId: string; plan: StudyPlan }) {
   const s = STATUS[plan.status];
   const quotaDone = plan.questionsPerDay > 0 ? Math.min(1, plan.doneToday / plan.questionsPerDay) : 1;
+  const mood: Mood = plan.status === "behind" ? "oops" : plan.status === "on-track" ? (plan.doneToday > 0 ? "thinking" : "idle") : plan.status === "ahead" && new Date().getHours() >= 21 ? "sleeping" : "cheer";
   return (
-    <Card className="mb-6 p-5">
+    <Card className="relative mb-6 overflow-hidden p-5 pr-20 sm:pr-28">
+      <Penguin mood={mood} size="sm" className="absolute top-4 right-3 sm:size-24" />
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 font-semibold">
           <CalendarCheck className="size-5 text-brand-600" />
@@ -78,7 +81,7 @@ export function PlanCard({ kitId, plan }: { kitId: string; plan: StudyPlan }) {
               Today: <b>{plan.doneToday}</b> of <b>{plan.questionsPerDay}</b> questions
               <span className="text-muted"> · about {plan.minutesPerDay} min a day</span>
             </span>
-            <span className="tabular-nums text-muted">{Math.round(quotaDone * 100)}%</span>
+            <span className="shrink-0 tabular-nums text-muted">{Math.round(quotaDone * 100)}%</span>
           </div>
           <Progress value={quotaDone} tone={plan.status === "ahead" ? "green" : plan.status === "behind" ? "amber" : "brand"} />
           <p className="mt-2 text-xs text-muted">

@@ -11,7 +11,7 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["favicon.ico", "icon-64.png", "icon-180.png", "logo.png"],
+      includeAssets: ["favicon.ico", "icon-64.png", "icon-180.png", "logo.png", "penguin/*.png"],
       manifest: {
         name: "Mnemo",
         short_name: "Mnemo",

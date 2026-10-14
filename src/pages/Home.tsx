@@ -6,6 +6,7 @@ import { Link } from "react-router";
 import { Badge, Button, Card, Empty, inputClass, LinkButton, Modal, PageHeader, Progress } from "../components/ui";
 import { db, deleteKit, newId, type Kit } from "../lib/db";
 import { daysUntil } from "../lib/plan";
+import { Penguin } from "../components/Penguin";
 import { cancelKitJobs } from "../lib/jobs";
 import { isDue } from "../lib/srs";
 import { useSettings } from "../lib/settings";
@@ -102,7 +103,7 @@ export default function Home() {
       ) : null}
 
       {kits === undefined ? null : shown.length === 0 ? (
-        <Empty icon={<img src={`${import.meta.env.BASE_URL}logo.png`} alt="" className="size-20 rounded-2xl" />} title={kits.length ? "No kits in this folder" : "Create your first study kit"}>
+        <Empty icon={<Penguin mood="idle" size="lg" />} title={kits.length ? "No kits in this folder" : "Create your first study kit"}>
           Drop in lecture slides, a PDF chapter, a recording, a YouTube lecture, or your own notes.
           <div className="mt-4">
             <LinkButton to="/new">

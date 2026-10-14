@@ -17,6 +17,7 @@ import {
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ExamDateField, PlanCard, useStudyPlan } from "../components/ExamPlan";
+import { PenguinSays } from "../components/Penguin";
 import { LanguageSelect } from "../components/LanguageSelect";
 import { Badge, Card, ErrorBox, inputClass, LinkButton, Progress, Spinner } from "../components/ui";
 import { db } from "../lib/db";
@@ -93,7 +94,7 @@ export default function KitPage() {
 
       {building && (
         <Card className="mb-6 space-y-3 p-5">
-          <Spinner label={job?.status ?? "Building your kit…"} />
+          <PenguinSays mood="reading">{job?.status ?? "Building your kit…"}</PenguinSays>
           <ul className="space-y-1 text-sm">
             {counts?.sources.map((s) => (
               <li key={s.id} className="flex items-center gap-2">

@@ -3,6 +3,7 @@ import { Check, Eye, Lightbulb, Sparkles, Target, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { InlineMarkdown, Markdown } from "../components/Markdown";
 import { useStudyPlan } from "../components/ExamPlan";
+import { PenguinSays, type Mood } from "../components/Penguin";
 import { Badge, Button, Card, ErrorBox, inputClass, PageHeader, Progress, Spinner, MissingKit } from "../components/ui";
 import { db, newId, type Concept, type Question } from "../lib/db";
 import { useConcepts, useKit } from "../lib/hooks";
@@ -16,6 +17,18 @@ export type Mode = "choice" | "short";
 /** Smart Study asks multiple choice and true/false; the Short answers section asks the written ones. */
 const TYPES: Record<Mode, Question["type"][]> = { choice: ["mcq", "tf"], short: ["short"] };
 const TITLES: Record<Mode, string> = { choice: "Smart Study", short: "Short answers" };
+
+const pick = <T,>(xs: T[], seed: string) => xs[Math.abs([...seed].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) | 0, 7)) % xs.length];
+const LINES = {
+  thinking: ["Take your time.", "What do you reckon?", "You've got this one.", "Hmm, let's see…"],
+  idea: ["Not quite. Here's a nudge.", "Close! Think about the hint.", "One more go, I believe in you."],
+  cheer: ["Nailed it!", "That's the one!", "Look at you go.", "Yes! Exactly that."],
+  oops: ["No worries, now you know.", "Tricky one. It'll stick now.", "That's what practice is for."],
+  reading: ["Writing questions for you…", "Reading your notes…"],
+  idle: ["Ready when you are."],
+  listening: ["I'm listening…"],
+  sleeping: ["Zzz…"],
+} satisfies Record<Mood, string[]>;
 
 interface Outcome {
   score: number;
@@ -258,11 +271,15 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
       )}
 
       {error && <ErrorBox error={error} onRetry={next} />}
-      {loading && !question && (
-        <Card className="p-8">
-          <Spinner label={loading} />
-        </Card>
-      )}
+      {(() => {
+        const mood: Mood = loading && !question ? "reading" : !question ? "idle" : phase === "answering" ? "thinking" : phase === "retry" ? "idea" : (outcome?.score ?? 0) >= 0.8 ? "cheer" : "oops";
+        const line = mood === "reading" ? loading : pick(LINES[mood], (question?.id ?? "") + phase);
+        return (
+          <PenguinSays mood={mood} className="mb-4">
+            {line}
+          </PenguinSays>
+        );
+      })()}
 
       {question && (
         <Card className="animate-pop p-5" key={question.id}>

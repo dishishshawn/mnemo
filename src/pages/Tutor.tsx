@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { Penguin, PenguinSays } from "../components/Penguin";
 import { useLiveQuery } from "dexie-react-hooks";
 import { Send, Square, Trash } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -103,7 +104,7 @@ export default function Tutor() {
         {messages.map((m, i) => (
           <Bubble key={i} role={m.role} text={m.text} />
         ))}
-        {streaming !== null && (streaming ? <Bubble role="model" text={streaming} /> : <Spinner label="Thinking" />)}
+        {streaming !== null && (streaming ? <Bubble role="model" text={streaming} /> : <PenguinSays mood="thinking" size="sm">Thinking…</PenguinSays>)}
         {error && <ErrorBox error={error} />}
         <div ref={bottom} />
       </div>
@@ -144,7 +145,8 @@ export default function Tutor() {
 
 function Bubble({ role, text }: { role: "user" | "model"; text: string }) {
   return (
-    <div className={clsx("flex", role === "user" ? "justify-end" : "justify-start")}>
+    <div className={clsx("flex items-end gap-2", role === "user" ? "justify-end" : "justify-start")}>
+      {role === "model" && <Penguin mood="idle" size="sm" className="shrink-0" />}
       <div className={clsx("max-w-[85%] rounded-2xl px-4 py-2.5", role === "user" ? "bg-brand-300 text-brand-900 dark:bg-brand-500 dark:text-white" : "surface")}>
         {role === "user" ? <p className="whitespace-pre-wrap text-sm">{text}</p> : <Markdown className="text-sm prose-p:my-1.5">{text}</Markdown>}
       </div>

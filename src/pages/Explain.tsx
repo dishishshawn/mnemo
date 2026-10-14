@@ -5,6 +5,7 @@ import clsx from "clsx";
 import { AlertTriangle, Check, Mic, MicOff, Sparkles, Square } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { InlineMarkdown } from "../components/Markdown";
+import { PenguinSays, type Mood } from "../components/Penguin";
 import { Badge, Button, Card, ErrorBox, inputClass, PageHeader, Spinner, MissingKit } from "../components/ui";
 import { db, newId, type Concept } from "../lib/db";
 import { useConcepts, useKit } from "../lib/hooks";
@@ -203,6 +204,29 @@ export default function Explain() {
           ))}
         </div>
       </Card>
+
+      {concept &&
+        (() => {
+          const mood: Mood = loading ? "reading" : result ? (result.score >= 0.8 ? "cheer" : result.score >= 0.4 ? "idea" : "oops") : listening ? "listening" : text.trim() ? "thinking" : "idle";
+          const line = loading
+            ? "Checking against your notes…"
+            : result
+              ? result.score >= 0.8
+                ? "You could teach this!"
+                : result.score >= 0.4
+                  ? "Good start. A couple of gaps."
+                  : "Let's go over it together."
+              : listening
+                ? "I'm listening…"
+                : text.trim()
+                  ? "Keep going, I'm following."
+                  : `Teach me about ${concept.name}.`;
+          return (
+            <PenguinSays mood={mood} className="mb-4">
+              {line}
+            </PenguinSays>
+          );
+        })()}
 
       {concept && (
         <Card className="animate-pop p-5" key={concept.id}>
