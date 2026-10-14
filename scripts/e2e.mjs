@@ -156,6 +156,8 @@ async function run(name, viewport, colorScheme) {
   await page.getByPlaceholder("AIza…").fill("AIzaTEST-not-a-real-key");
   await page.getByRole("button", { name: "Test" }).click();
   await page.getByText("Key works.").waitFor();
+  // The app defaults to light regardless of the OS; the dark run opts in like a user would.
+  if (colorScheme === "dark") await page.getByRole("button", { name: "Dark", exact: true }).click();
   await shot("02-settings");
 
   await page.goto(`${BASE}#/new`);

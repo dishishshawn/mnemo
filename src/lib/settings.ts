@@ -25,7 +25,7 @@ export const DEFAULT_SETTINGS: Settings = {
   ttsModel: "gemini-3.8-flash-lite-tts",
   podcastVoices: ["Puck", "Kore"],
   podcastMinutes: 8,
-  theme: "system",
+  theme: "light",
 };
 
 export const TTS_VOICES = [
@@ -36,6 +36,7 @@ export const TTS_VOICES = [
 ];
 
 const KEY = "mnemo.settings";
+const THEME_MIGRATED = "mnemo.theme.light-default";
 /** When synced settings last changed on this device; newer wins across devices. */
 const TS_KEY = "mnemo.settings.ts";
 const listeners = new Set<() => void>();
@@ -52,6 +53,16 @@ function read(): Settings {
     // Private mode or corrupt value: fall back to defaults.
   }
   cached = { ...DEFAULT_SETTINGS, ...stored };
+  // Light became the default on 2026-10-14. Devices that still carry the old default ("system",
+  // which was written out as if chosen) move over once; picking System in Settings after that sticks.
+  try {
+    if (!localStorage.getItem(THEME_MIGRATED) ) {
+      if (stored.theme === "system") cached = { ...cached, theme: "light" };
+      localStorage.setItem(THEME_MIGRATED, "1");
+    }
+  } catch {
+    // ignore
+  }
   return cached;
 }
 
