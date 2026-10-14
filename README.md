@@ -1,3 +1,5 @@
+<p align="center"><img src="public/logo.png" width="120" alt=""></p>
+
 # Mnemo
 
 A personal AI study app. Drop in course material (slides, PDFs, photos of notes, lecture
