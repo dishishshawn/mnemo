@@ -9,6 +9,13 @@ export const TARGET_RETENTION = 0.9;
 /** Fallback seconds per question until there is enough history to measure it. */
 export const DEFAULT_SEC_PER_QUESTION = 45;
 const DAY = 86_400_000;
+/**
+ * A concept is tracked as one memory, but it holds several facts, and one right answer can be a
+ * lucky guess. So a review of it means a question on each of its facts: about five per chunk of
+ * notes (~1800 characters) the concept covers, up to a cap.
+ */
+export const QUESTIONS_PER_CHUNK = 5;
+const MAX_QUESTIONS_PER_REVIEW = 15;
 
 /** Deterministic scheduler for forward simulation (the live one fuzzes intervals). */
 const sim = fsrs({ enable_fuzz: false, request_retention: TARGET_RETENTION });
@@ -59,6 +66,11 @@ export function reviewsNeeded(card: Card, exam: Date, now = new Date()): number 
   return n;
 }
 
+/** Questions in one review of this concept, from how much of the material it covers. */
+export function questionsPerReview(concept: Pick<Concept, "chunkKeys">): number {
+  return Math.min(MAX_QUESTIONS_PER_REVIEW, QUESTIONS_PER_CHUNK * Math.max(1, concept.chunkKeys?.length ?? 0));
+}
+
 /**
  * Median seconds between consecutive answers within a sitting, from recent history. Gaps over
  * ten minutes are breaks, not thinking time.
@@ -92,6 +104,8 @@ export interface ConceptForecast {
   /** Predicted recall on exam day with no more study, 0..1. */
   onExamDay: number;
   reviewsNeeded: number;
+  /** Questions those reviews take, before misses. */
+  questions: number;
 }
 
 export interface StudyPlan {
@@ -125,19 +139,18 @@ export function buildPlan(examDate: string, concepts: Concept[], attempts: Attem
   const misses = missRate(attempts);
 
   const forecasts: ConceptForecast[] = concepts
-    .map((concept) => ({
-      concept,
-      onExamDay: retrievability(concept.srs, exam),
-      reviewsNeeded: over ? 0 : reviewsNeeded(concept.srs, exam, now),
-    }))
+    .map((concept) => {
+      const reviews = over ? 0 : reviewsNeeded(concept.srs, exam, now);
+      return { concept, onExamDay: retrievability(concept.srs, exam), reviewsNeeded: reviews, questions: reviews * questionsPerReview(concept) };
+    })
     .sort((a, b) => a.onExamDay - b.onExamDay);
 
   const readiness = forecasts.length ? forecasts.reduce((n, f) => n + f.onExamDay, 0) / forecasts.length : 0;
   const readyShare = forecasts.length ? forecasts.filter((f) => f.onExamDay >= TARGET_RETENTION).length / forecasts.length : 0;
 
-  // Each review is about one question; misses bring a question back, which is extra work.
-  const reviews = forecasts.reduce((n, f) => n + f.reviewsNeeded, 0);
-  const totalQuestions = Math.ceil(reviews * (1 + misses));
+  // Misses bring a question back, which is extra work.
+  const questions = forecasts.reduce((n, f) => n + f.questions, 0);
+  const totalQuestions = Math.ceil(questions * (1 + misses));
   const questionsPerDay = over ? 0 : Math.ceil(totalQuestions / Math.max(1, daysLeft));
   const minutesPerDay = Math.ceil((questionsPerDay * secPerQuestion) / 60);
 
@@ -174,6 +187,12 @@ export function buildPlan(examDate: string, concepts: Concept[], attempts: Attem
     curve,
     secPerQuestion,
   };
+}
+
+export function formatMinutes(minutes: number): string {
+  if (minutes < 60) return `${minutes} min`;
+  const m = minutes % 60;
+  return m ? `${Math.floor(minutes / 60)} h ${m} min` : `${minutes / 60} h`;
 }
 
 export function formatDaysLeft(daysLeft: number, over: boolean): string {

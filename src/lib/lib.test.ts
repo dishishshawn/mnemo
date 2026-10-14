@@ -320,7 +320,7 @@ describe("question reuse", () => {
 });
 
 describe("exam plan", async () => {
-  const { buildPlan, daysUntil, reviewsNeeded, secondsPerQuestion, examStart } = await import("./plan");
+  const { buildPlan, daysUntil, formatMinutes, questionsPerReview, reviewsNeeded, secondsPerQuestion, examStart } = await import("./plan");
   const now = new Date(2026, 9, 13, 10, 0); // Tue 13 Oct 2026, 10:00 local
   const concept = (over: Partial<Concept>): Concept => ({
     id: over.id ?? "c",
@@ -369,6 +369,21 @@ describe("exam plan", async () => {
     expect(later.doneToday).toBe(plan.questionsPerDay);
     expect(later.leftToday).toBe(0);
     expect(later.status).toBe("ahead");
+  });
+
+  it("asks about each fact in a review, so broader concepts take more questions", () => {
+    expect(questionsPerReview({})).toBe(5);
+    expect(questionsPerReview({ chunkKeys: ["a", "b"] })).toBe(10);
+    expect(questionsPerReview({ chunkKeys: Array(9).fill("x") })).toBe(15);
+    const kit = (chunks: number) => Array.from({ length: 10 }, (_, i) => concept({ id: `c${i}`, name: `C${i}`, chunkKeys: Array.from({ length: chunks }, (_, j) => `${i}-${j}`) }));
+    const narrow = buildPlan("2026-10-26", kit(1), [], now);
+    const wide = buildPlan("2026-10-26", kit(2), [], now);
+    expect(wide.questionsPerDay).toBeGreaterThan(narrow.questionsPerDay);
+    // Ten lecture-sized concepts two weeks out is real work, not a few minutes.
+    expect(wide.minutesPerDay).toBeGreaterThanOrEqual(15);
+    expect(formatMinutes(25)).toBe("25 min");
+    expect(formatMinutes(90)).toBe("1 h 30 min");
+    expect(formatMinutes(120)).toBe("2 h");
   });
 
   it("is over on exam day and ready when everything holds", () => {

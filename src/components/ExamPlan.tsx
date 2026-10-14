@@ -3,7 +3,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { CalendarCheck, CalendarClock } from "lucide-react";
 import { Link } from "react-router";
 import { db, type Kit } from "../lib/db";
-import { buildPlan, formatDaysLeft, TARGET_RETENTION, todayKey, type StudyPlan } from "../lib/plan";
+import { buildPlan, formatDaysLeft, formatMinutes, TARGET_RETENTION, todayKey, type StudyPlan } from "../lib/plan";
 import { Penguin, type Mood } from "./Penguin";
 import { Badge, Card, inputClass, Progress } from "./ui";
 
@@ -57,9 +57,13 @@ export function PlanCard({ kitId, plan }: { kitId: string; plan: StudyPlan }) {
   const quotaDone = plan.questionsPerDay > 0 ? Math.min(1, plan.doneToday / plan.questionsPerDay) : 1;
   const mood: Mood = plan.status === "behind" ? "oops" : plan.status === "on-track" ? (plan.doneToday > 0 ? "thinking" : "idle") : plan.status === "ahead" && new Date().getHours() >= 21 ? "sleeping" : "cheer";
   return (
-    <Card className="relative mb-6 overflow-hidden p-5 pr-20 sm:pr-28">
-      <Penguin mood={mood} size="sm" className="absolute top-4 right-3 sm:size-24" />
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+    <Card className="relative mb-6 overflow-hidden p-5 sm:pr-28">
+      {/* Positioned by a wrapper: the penguin's own box is position: relative. */}
+      <div className="absolute top-4 right-3">
+        <Penguin mood={mood} size="sm" className="sm:size-24" />
+      </div>
+      {/* On phones the penguin sits beside this row only; from sm up he spans the card. */}
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 pr-14 sm:pr-0">
         <div className="flex items-center gap-2 font-semibold">
           <CalendarCheck className="size-5 text-brand-600" />
           {formatDaysLeft(plan.daysLeft, plan.over)}
@@ -78,8 +82,19 @@ export function PlanCard({ kitId, plan }: { kitId: string; plan: StudyPlan }) {
         <>
           <div className="mb-1 flex items-center justify-between text-sm">
             <span>
-              Today: <b>{plan.doneToday}</b> of <b>{plan.questionsPerDay}</b> questions
-              <span className="text-muted"> · about {plan.minutesPerDay} min a day</span>
+              Today:{" "}
+              {plan.doneToday >= plan.questionsPerDay ? (
+                <>
+                  <b>{plan.doneToday}</b> questions (goal {plan.questionsPerDay})
+                </>
+              ) : (
+                <>
+                  <b>{plan.doneToday}</b> of <b>{plan.questionsPerDay}</b> questions
+                </>
+              )}
+              <span className="block text-muted sm:inline">
+                <span className="hidden sm:inline"> · </span>about {formatMinutes(plan.minutesPerDay)} a day
+              </span>
             </span>
             <span className="shrink-0 tabular-nums text-muted">{Math.round(quotaDone * 100)}%</span>
           </div>
@@ -93,9 +108,9 @@ export function PlanCard({ kitId, plan }: { kitId: string; plan: StudyPlan }) {
                 and you're on pace.
               </>
             ) : (
-              "Quota met. Anything extra now makes exam day easier."
+              "Today's goal is met. Anything extra makes exam day easier."
             )}{" "}
-            If you stopped now you'd recall about <b>{Math.round(plan.readiness * 100)}%</b> on exam day; the plan aims for {Math.round(TARGET_RETENTION * 100)}%.
+            Stop now and you'd remember about <b>{Math.round(plan.readiness * 100)}%</b> by exam day; keeping to the plan gets you to {Math.round(TARGET_RETENTION * 100)}%.
           </p>
         </>
       )}
