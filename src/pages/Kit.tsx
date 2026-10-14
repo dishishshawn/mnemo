@@ -68,7 +68,7 @@ export default function KitPage() {
       <div className="mb-6 flex items-start gap-4">
         <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl surface text-3xl">{kit.emoji}</div>
         <div className="min-w-0 flex-1">
-          <Link to="/" className="text-sm text-muted hover:text-brand-700">
+          <Link to="/" className="text-sm text-muted hover:text-brand-600">
             ← All kits
           </Link>
           {editing ? (
@@ -217,7 +217,7 @@ function Tile({ to, icon, title, badge, accent, children }: { to: string; icon: 
         )}
       >
         <div className="flex items-center justify-between">
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand-100 text-brand-700 dark:bg-brand-900/50 dark:text-brand-200 [&>svg]:size-5">{icon}</div>
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand-100 text-brand-600 dark:bg-brand-900/50 dark:text-brand-200 [&>svg]:size-5">{icon}</div>
           <span className="hidden sm:block">{badge}</span>
         </div>
         <div className="min-w-0 flex-1">

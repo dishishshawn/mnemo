@@ -141,7 +141,7 @@ export function SourcePicker({ items, onChange }: { items: NewSource[]; onChange
         <ul className="space-y-2">
           {items.map((s, i) => (
             <li key={i} className="flex items-center gap-3 rounded-xl surface-2 px-3 py-2 text-sm">
-              <span className="text-brand-700 dark:text-brand-300">{KIND_ICON[kindOfSource(s)]}</span>
+              <span className="text-brand-600 dark:text-brand-300">{KIND_ICON[kindOfSource(s)]}</span>
               <span className="min-w-0 flex-1 truncate">{label(s)}</span>
               {s.type === "file" && <span className="text-xs text-muted">{(s.file.size / 1024 / 1024).toFixed(1)} MB</span>}
               <button type="button" onClick={() => onChange(items.filter((_, j) => j !== i))} className="text-muted hover:text-rose-600" aria-label="Remove">

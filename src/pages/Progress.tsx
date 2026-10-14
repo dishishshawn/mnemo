@@ -106,7 +106,7 @@ export default function ProgressPage() {
                   </span>
                 </div>
                 <div className="h-2 overflow-hidden rounded surface-2">
-                  <div className="h-full rounded bg-brand-600 transition-all" style={{ width: `${Math.round(c.mastery * 100)}%` }} />
+                  <div className="h-full rounded bg-brand-400 transition-all" style={{ width: `${Math.round(c.mastery * 100)}%` }} />
                 </div>
               </div>
             );

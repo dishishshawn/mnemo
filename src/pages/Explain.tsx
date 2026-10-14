@@ -195,7 +195,7 @@ export default function Explain() {
               onClick={() => c.id !== concept?.id && reset(c)}
               className={clsx(
                 "rounded-full px-2.5 py-1 text-xs font-medium transition",
-                c.id === concept?.id ? "bg-brand-700 text-white" : "surface-2 text-muted hover:text-[var(--text)]",
+                c.id === concept?.id ? "bg-brand-300 text-brand-900 dark:bg-brand-500 dark:text-white" : "surface-2 text-muted hover:text-[var(--text)]",
               )}
             >
               {c.name}
@@ -281,8 +281,8 @@ export default function Explain() {
                   result.score >= 0.8
                     ? "bg-emerald-50 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"
                     : result.score >= 0.4
-                      ? "bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-100"
-                      : "bg-rose-50 text-rose-900 dark:bg-rose-950/30 dark:text-rose-100",
+                      ? "bg-butter-100 text-butter-800 dark:bg-butter-800/30 dark:text-butter-200"
+                      : "bg-blush-100 text-blush-700 dark:bg-blush-700/25 dark:text-blush-200",
                 )}
               >
                 <span>{result.score >= 0.8 ? "You could teach this." : result.score >= 0.4 ? "Most of the way there." : "The core idea needs another pass."}</span>

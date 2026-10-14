@@ -39,8 +39,13 @@ export function Layout({ children }: { children: ReactNode }) {
       <header className="sticky top-0 z-40 border-b border-theme bg-[var(--bg)]/85 backdrop-blur">
         <div className="mx-auto flex max-w-5xl items-center gap-2 px-4 py-3">
           <Link to="/" className="mr-2 flex items-center gap-2 font-bold tracking-tight">
-            <img src={`${import.meta.env.BASE_URL}logo.png`} alt="" className="size-8 rounded-lg" />
-            <span className="text-lg">Mnemo</span>
+            <img src={`${import.meta.env.BASE_URL}logo.png`} alt="" className="size-9 rounded-xl border-[1.5px] border-brand-200 dark:border-brand-800" />
+            <span className="text-lg font-extrabold text-brand-900 dark:text-brand-100">Mnemo</span>
+            <span className="hidden gap-0.5 text-[10px] leading-none sm:inline-flex" aria-hidden>
+              <span className="sparkle">✦</span>
+              <span className="sparkle">✦</span>
+              <span className="sparkle">✦</span>
+            </span>
           </Link>
           <nav className="flex flex-1 items-center gap-1">
             <NavLink to="/" end className={navItem}>

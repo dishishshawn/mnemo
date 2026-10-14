@@ -57,7 +57,7 @@ export default function Home() {
       {!settings.apiKey && (
         <Link
           to="/settings"
-          className="mb-6 flex items-center gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100"
+          className="mb-6 flex items-center gap-3 rounded-2xl border-[1.5px] border-butter-200 bg-butter-100 p-4 text-sm text-butter-800 dark:border-butter-800/60 dark:bg-butter-800/25 dark:text-butter-200"
         >
           <KeyRound className="size-5 shrink-0" />
           <span>
@@ -84,13 +84,13 @@ export default function Home() {
               onClick={() => setFolder(f.id)}
               className={clsx(
                 "rounded-full px-3 py-1.5 text-sm font-medium transition",
-                folder === f.id ? "bg-brand-700 text-white" : "surface text-muted hover:text-[var(--text)]",
+                folder === f.id ? "bg-brand-300 text-brand-900 dark:bg-brand-500 dark:text-white" : "surface text-muted hover:text-[var(--text)]",
               )}
             >
               {f.name}
             </button>
           ))}
-          <button onClick={() => setNewFolder("")} className="flex items-center gap-1 rounded-full px-3 py-1.5 text-sm text-muted hover:text-brand-700">
+          <button onClick={() => setNewFolder("")} className="flex items-center gap-1 rounded-full px-3 py-1.5 text-sm text-muted hover:text-brand-600">
             <FolderPlus className="size-4" /> Folder
           </button>
           {folder !== "all" && (

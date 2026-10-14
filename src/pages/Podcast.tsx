@@ -108,7 +108,7 @@ function Episode({ episode, kitTitle }: { episode: Output; kitTitle: string }) {
         </div>
         <div className="flex gap-1">
           {episode.audio && (
-            <button onClick={() => download(audioBlob(episode.audio!), `${slug(kitTitle)}-podcast.wav`)} className="rounded-lg p-2 text-muted hover:text-brand-700" aria-label="Download">
+            <button onClick={() => download(audioBlob(episode.audio!), `${slug(kitTitle)}-podcast.wav`)} className="rounded-lg p-2 text-muted hover:text-brand-600" aria-label="Download">
               <Download className="size-4" />
             </button>
           )}
@@ -118,14 +118,14 @@ function Episode({ episode, kitTitle }: { episode: Output; kitTitle: string }) {
         </div>
       </div>
       {url ? <audio controls src={url} className="w-full" preload="metadata" /> : <RecordHere episodeId={episode.id} />}
-      <button onClick={() => setShowScript((s) => !s)} className="text-sm text-brand-700 hover:underline dark:text-brand-300">
+      <button onClick={() => setShowScript((s) => !s)} className="text-sm text-brand-600 hover:underline dark:text-brand-300">
         {showScript ? "Hide transcript" : "Show transcript"}
       </button>
       {showScript && (
         <div className="max-h-96 space-y-2 overflow-y-auto rounded-xl surface-2 p-3 text-sm">
           {script.lines.map((l, i) => (
             <p key={i}>
-              <b className={l.speaker === "A" ? "text-brand-700 dark:text-brand-300" : "text-amber-700 dark:text-amber-300"}>{l.speaker === "A" ? HOSTS[0] : HOSTS[1]}:</b> {l.text}
+              <b className={l.speaker === "A" ? "text-brand-600 dark:text-brand-300" : "text-amber-700 dark:text-amber-300"}>{l.speaker === "A" ? HOSTS[0] : HOSTS[1]}:</b> {l.text}
             </p>
           ))}
         </div>

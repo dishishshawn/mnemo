@@ -76,7 +76,7 @@ export default function Sources() {
         {sources.map((s) => (
           <Card key={s.id} className="overflow-hidden">
             <div className="flex cursor-pointer items-center gap-3 p-3" onClick={() => setOpen(open === s.id ? null : s.id)}>
-              <span className="text-brand-700 dark:text-brand-300">{KIND_ICON[s.kind]}</span>
+              <span className="text-brand-600 dark:text-brand-300">{KIND_ICON[s.kind]}</span>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{s.name}</div>
                 <div className="text-xs text-muted">

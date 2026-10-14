@@ -16,8 +16,8 @@ export default defineConfig({
         name: "Mnemo",
         short_name: "Mnemo",
         description: "Turn your course material into flashcards, practice questions, study guides and podcasts.",
-        theme_color: "#6d28d9",
-        background_color: "#faf8ff",
+        theme_color: "#4f83c6",
+        background_color: "#f4f8fe",
         display: "standalone",
         icons: [
           { src: "icon-192.png", sizes: "192x192", type: "image/png" },

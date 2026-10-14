@@ -75,7 +75,7 @@ function GameTile({ icon, title, best, onClick, children }: { icon: ReactNode; t
   return (
     <button onClick={onClick} className="text-left">
       <Card className="flex items-center gap-4 p-4 transition hover:-translate-y-0.5 hover:border-brand-400 hover:shadow-md">
-        <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-brand-100 text-brand-700 dark:bg-brand-900/50 dark:text-brand-200 [&>svg]:size-6">{icon}</div>
+        <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-brand-100 text-brand-600 dark:bg-brand-900/50 dark:text-brand-200 [&>svg]:size-6">{icon}</div>
         <div className="flex-1">
           <div className="flex items-center gap-2 font-semibold">
             {title}
@@ -179,7 +179,7 @@ function Match({ cards, onFinish, best }: { cards: Flashcard[]; onFinish: (ms: n
                 "min-h-24 rounded-xl border p-3 text-left text-sm transition",
                 cleared.has(t.cardId) && "pointer-events-none scale-95 opacity-0",
                 selected?.key === t.key && "border-brand-500 bg-brand-50 dark:bg-brand-950/40",
-                wrong.includes(t.key) && "animate-shake border-rose-400 bg-rose-50 dark:bg-rose-950/30",
+                wrong.includes(t.key) && "animate-shake border-blush-500 bg-blush-100 dark:bg-blush-700/25",
                 t.side === "term" ? "font-semibold" : "text-xs leading-snug",
                 selected?.key !== t.key && !wrong.includes(t.key) && "surface hover:border-brand-400",
               )}

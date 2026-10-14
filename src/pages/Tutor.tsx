@@ -145,7 +145,7 @@ export default function Tutor() {
 function Bubble({ role, text }: { role: "user" | "model"; text: string }) {
   return (
     <div className={clsx("flex", role === "user" ? "justify-end" : "justify-start")}>
-      <div className={clsx("max-w-[85%] rounded-2xl px-4 py-2.5", role === "user" ? "bg-brand-700 text-white" : "surface")}>
+      <div className={clsx("max-w-[85%] rounded-2xl px-4 py-2.5", role === "user" ? "bg-brand-300 text-brand-900 dark:bg-brand-500 dark:text-white" : "surface")}>
         {role === "user" ? <p className="whitespace-pre-wrap text-sm">{text}</p> : <Markdown className="text-sm prose-p:my-1.5">{text}</Markdown>}
       </div>
     </div>

@@ -213,7 +213,7 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
                   onClick={() => setFocus((f) => (f.includes(c.name) ? f.filter((x) => x !== c.name) : [...f, c.name]))}
                   className={clsx(
                     "rounded-full px-2.5 py-1 text-xs font-medium transition",
-                    focus.includes(c.name) ? "bg-brand-700 text-white" : "surface-2 text-muted hover:text-[var(--text)]",
+                    focus.includes(c.name) ? "bg-brand-300 text-brand-900 dark:bg-brand-500 dark:text-white" : "surface-2 text-muted hover:text-[var(--text)]",
                   )}
                 >
                   {c.name}
@@ -287,8 +287,8 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
                     disabled={phase === "done" || isPicked}
                     className={clsx(
                       "flex w-full items-start gap-3 rounded-xl border p-3 text-left transition",
-                      show && isAnswer && "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30",
-                      isPicked && !isAnswer && "animate-shake border-rose-400 bg-rose-50 dark:bg-rose-950/30",
+                      show && isAnswer && "border-emerald-400 bg-emerald-50 dark:bg-emerald-950/30",
+                      isPicked && !isAnswer && "animate-shake border-blush-500 bg-blush-100 dark:bg-blush-700/25",
                       !(show && isAnswer) && !isPicked && "border-theme hover:border-brand-400 hover:bg-[var(--surface-2)]",
                     )}
                   >
@@ -318,7 +318,7 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
           )}
 
           {phase === "retry" && (
-            <div className="mt-4 flex gap-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+            <div className="mt-4 flex gap-3 rounded-xl bg-butter-100 p-3 text-sm text-butter-800 dark:bg-butter-800/30 dark:text-butter-200">
               <Lightbulb className="mt-0.5 size-4 shrink-0" />
               <div className="space-y-1">
                 {feedback ? <InlineMarkdown>{feedback}</InlineMarkdown> : <b>Not quite. Here's a nudge:</b>}
@@ -341,8 +341,8 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
                   outcome.score >= 0.8
                     ? "bg-emerald-50 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"
                     : outcome.score > 0
-                      ? "bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-100"
-                      : "bg-rose-50 text-rose-900 dark:bg-rose-950/30 dark:text-rose-100",
+                      ? "bg-butter-100 text-butter-800 dark:bg-butter-800/30 dark:text-butter-200"
+                      : "bg-blush-100 text-blush-700 dark:bg-blush-700/25 dark:text-blush-200",
                 )}
               >
                 {outcome.score >= 0.8 ? "Nice, that's right." : outcome.score > 0 ? "Partly there." : "Let's lock this one in."}

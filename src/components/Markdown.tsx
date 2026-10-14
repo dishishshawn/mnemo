@@ -8,7 +8,7 @@ export function Markdown({ children, className }: { children: string; className?
   return (
     <div
       className={clsx(
-        "prose prose-slate max-w-none dark:prose-invert prose-headings:tracking-tight prose-a:text-brand-700 prose-table:text-sm prose-th:text-left",
+        "prose prose-slate max-w-none dark:prose-invert prose-headings:tracking-tight prose-a:text-brand-600 prose-table:text-sm prose-th:text-left",
         className,
       )}
     >

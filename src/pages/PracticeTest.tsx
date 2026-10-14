@@ -68,7 +68,7 @@ function Setup({ kitId, onStart, history, onOpen }: { kitId: string; onStart: (i
         <Field label="Questions" group>
           <div className="flex gap-2">
             {[10, 15, 25, 40].map((n) => (
-              <button key={n} onClick={() => setCount(n)} className={clsx("flex-1 rounded-xl py-2 text-sm font-medium", count === n ? "bg-brand-700 text-white" : "surface-2")}>
+              <button key={n} onClick={() => setCount(n)} className={clsx("flex-1 rounded-xl py-2 text-sm font-medium", count === n ? "bg-brand-300 text-brand-900 dark:bg-brand-500 dark:text-white" : "surface-2")}>
                 {n}
               </button>
             ))}
@@ -83,7 +83,7 @@ function Setup({ kitId, onStart, history, onOpen }: { kitId: string; onStart: (i
                 ["short", "Short answer"],
               ] as [QType, string][]
             ).map(([t, label]) => (
-              <button key={t} onClick={() => toggle(t)} className={clsx("rounded-xl px-3 py-2 text-sm font-medium", types.includes(t) ? "bg-brand-700 text-white" : "surface-2")}>
+              <button key={t} onClick={() => toggle(t)} className={clsx("rounded-xl px-3 py-2 text-sm font-medium", types.includes(t) ? "bg-brand-300 text-brand-900 dark:bg-brand-500 dark:text-white" : "surface-2")}>
                 {label}
               </button>
             ))}
@@ -268,13 +268,13 @@ function TestView({ run, onExit }: { run: TestRun; onExit: () => void }) {
                       onClick={() => setAnswers((a) => ({ ...a, [q.id]: String(i) }))}
                       className={clsx(
                         "flex w-full items-start gap-3 rounded-xl border p-3 text-left text-sm transition",
-                        correct && "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30",
-                        finished && chosen && !correct && "border-rose-400 bg-rose-50 dark:bg-rose-950/30",
+                        correct && "border-emerald-400 bg-emerald-50 dark:bg-emerald-950/30",
+                        finished && chosen && !correct && "border-blush-500 bg-blush-100 dark:bg-blush-700/25",
                         !finished && chosen && "border-brand-500 bg-brand-50 dark:bg-brand-950/40",
                         !correct && !chosen && "border-theme hover:border-brand-400",
                       )}
                     >
-                      <span className={clsx("mt-0.5 size-4 shrink-0 rounded-full border-2", chosen ? "border-brand-600 bg-brand-600" : "border-[var(--border)]")} />
+                      <span className={clsx("mt-0.5 size-4 shrink-0 rounded-full border-2", chosen ? "border-brand-600 bg-brand-400" : "border-[var(--border)]")} />
                       <InlineMarkdown className="flex-1">{opt}</InlineMarkdown>
                     </button>
                   );

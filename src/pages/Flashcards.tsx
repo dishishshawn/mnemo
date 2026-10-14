@@ -168,7 +168,7 @@ function Review({ cards, due }: { cards: Flashcard[]; due: Flashcard[] }) {
       <div className="mb-3 flex items-center gap-3">
         <Progress value={doneCount / Math.max(1, total)} className="flex-1" />
         <span className="text-xs tabular-nums text-muted">{queue.length} left</span>
-        <button onClick={() => setReversed((r) => !r)} className={clsx("rounded-lg p-1.5 text-muted hover:text-[var(--text)]", reversed && "text-brand-700")} title="Show the answer side first">
+        <button onClick={() => setReversed((r) => !r)} className={clsx("rounded-lg p-1.5 text-muted hover:text-[var(--text)]", reversed && "text-brand-600")} title="Show the answer side first">
           <RotateCcw className="size-4" />
         </button>
       </div>
@@ -233,7 +233,7 @@ function Browse({ cards, kitId }: { cards: Flashcard[]; kitId: string }) {
             <InlineMarkdown className="text-sm text-muted">{c.back}</InlineMarkdown>
           </div>
           <div className="flex shrink-0 flex-col gap-1">
-            <button onClick={() => setEditing(c)} className="rounded p-1 text-muted hover:text-brand-700" aria-label="Edit">
+            <button onClick={() => setEditing(c)} className="rounded p-1 text-muted hover:text-brand-600" aria-label="Edit">
               <Pencil className="size-4" />
             </button>
             <button onClick={() => db.flashcards.delete(c.id)} className="rounded p-1 text-muted hover:text-rose-600" aria-label="Delete">

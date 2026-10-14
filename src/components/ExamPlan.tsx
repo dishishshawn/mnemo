@@ -84,7 +84,7 @@ export function PlanCard({ kitId, plan }: { kitId: string; plan: StudyPlan }) {
           <p className="mt-2 text-xs text-muted">
             {plan.leftToday > 0 ? (
               <>
-                <Link to={`/kit/${kitId}/smart`} className="font-medium text-brand-700 hover:underline">
+                <Link to={`/kit/${kitId}/smart`} className="font-medium text-brand-600 hover:underline">
                   {plan.leftToday} more in Smart Study
                 </Link>{" "}
                 and you're on pace.
@@ -130,8 +130,8 @@ export function ForecastCurve({ plan, className }: { plan: StudyPlan; className?
       <text x={W - 8} y={targetY - 4} textAnchor="end" fontSize={11} fill="#059669">
         target
       </text>
-      <path d={area} fill="#7c3aed" fillOpacity={0.12} />
-      <path d={line} fill="none" stroke="#7c3aed" strokeWidth={2.5} strokeLinejoin="round" />
+      <path d={area} fill="#6797d0" fillOpacity={0.12} />
+      <path d={line} fill="none" stroke="#6797d0" strokeWidth={2.5} strokeLinejoin="round" />
       {pts.map((p, i) =>
         i % labelEvery === 0 || i === pts.length - 1 ? (
           <text key={p.day} x={x(i)} y={H - 6} textAnchor={i === pts.length - 1 ? "end" : i === 0 ? "start" : "middle"} fontSize={11} fill="currentColor" fillOpacity={0.6}>

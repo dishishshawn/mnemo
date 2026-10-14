@@ -60,7 +60,7 @@ function ApiKey() {
         <h2 className="font-semibold">Gemini API key</h2>
         <p className="mt-1 text-sm text-muted">
           Get a free key at{" "}
-          <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-brand-700 underline dark:text-brand-300">
+          <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-brand-600 underline dark:text-brand-300">
             aistudio.google.com/apikey <ExternalLink className="size-3" />
           </a>
           . It's kept in this browser and sent only to Google.
@@ -133,7 +133,7 @@ function Usage() {
               <div key={t.key} className="grid grid-cols-[9rem_1fr_4.5rem] items-center gap-3 text-sm" title={`${t.key}: ${formatUsd(t.cost)} over ${t.calls} calls`}>
                 <span className="truncate text-muted">{t.key}</span>
                 <div className="h-2 rounded surface-2">
-                  <div className="h-full rounded bg-brand-600" style={{ width: `${Math.max(1, (t.cost / maxTask) * 100)}%` }} />
+                  <div className="h-full rounded bg-brand-400" style={{ width: `${Math.max(1, (t.cost / maxTask) * 100)}%` }} />
                 </div>
                 <span className="text-right tabular-nums">{formatUsd(t.cost)}</span>
               </div>
