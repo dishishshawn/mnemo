@@ -266,8 +266,60 @@ body {
     penguin-pop 0.35s ease-out,
     penguin-bob 3s ease-in-out 0.35s infinite;
 }
+@keyframes penguin-blush {
+  0% {
+    transform: scale(0.9);
+  }
+  40% {
+    transform: scale(1.06) rotate(-2deg);
+  }
+  100% {
+    transform: scale(1) rotate(0);
+  }
+}
+.penguin-love {
+  animation: penguin-blush 0.5s ease-out;
+}
+@keyframes penguin-toot {
+  0% {
+    transform: translateY(0) scale(1);
+  }
+  25% {
+    transform: translateY(2px) scale(1.04, 0.94);
+  }
+  45% {
+    transform: translateY(-10px) scale(0.97, 1.05) rotate(2deg);
+  }
+  70% {
+    transform: translateY(0) scale(1.02, 0.98);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+.penguin-toot {
+  animation: penguin-toot 0.7s ease-out;
+  transform-origin: 50% 100%;
+}
+@keyframes heart-float {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.6);
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-28px) scale(1.1);
+  }
+}
+.heart-float {
+  animation: heart-float 1.6s ease-out forwards;
+}
 @media (prefers-reduced-motion: reduce) {
-  [class*="penguin-"] {
+  [class*="penguin-"],
+  .heart-float {
     animation: none;
   }
 }

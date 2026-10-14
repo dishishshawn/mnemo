@@ -28,6 +28,8 @@ const LINES = {
   idle: ["Ready when you are."],
   listening: ["I'm listening…"],
   sleeping: ["Zzz…"],
+  love: ["♥"],
+  toot: ["…excuse me."],
 } satisfies Record<Mood, string[]>;
 
 interface Outcome {
