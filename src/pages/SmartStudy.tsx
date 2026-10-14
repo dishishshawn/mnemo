@@ -53,7 +53,8 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
   const [round, setRound] = useState({ answered: 0, score: 0 });
   const [showSetup, setShowSetup] = useState(false);
   const recent = useRef<string[]>([]);
-  const prefetching = useRef(false);
+  /** The in-flight top-up, so an empty pool waits for it instead of starting a second one. */
+  const prefetching = useRef<Promise<void> | null>(null);
   const started = useRef(false);
   const advancing = useRef(false);
   const askedIds = useRef(new Set<string>());
@@ -83,36 +84,44 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
     }
   }, [kitId, targetsFor, generate]);
 
+  const fresh = (pool: Question[]) => pool.filter((p) => !askedIds.current.has(p.id) && types.includes(p.type));
+  const loadPool = async () => fresh(await db.questions.where("[kitId+origin]").equals([kitId, "smart"]).toArray());
+
+  /** Starts a background batch when the pool is getting low, unless one is already on its way. */
+  const topUp = (all: Concept[], pool: Question[]) => {
+    if (prefetching.current || !needsMore(pool, targetsFor(all))) return;
+    prefetching.current = generate(all)
+      .catch(() => {})
+      .finally(() => (prefetching.current = null));
+  };
+
   const advance = async () => {
     setError("");
     // The last answer must be saved (askedAt) before picking, or the same question can come back.
     await saving.current;
-    const fresh = (pool: Question[]) => pool.filter((p) => !askedIds.current.has(p.id) && types.includes(p.type));
     const all = await db.concepts.where("kitId").equals(kitId).sortBy("order");
     if (!all.length) return setError("This kit has no concepts yet.");
     const targets = targetsFor(all);
-    let pool = fresh(await db.questions.where("[kitId+origin]").equals([kitId, "smart"]).toArray());
+    let pool = await loadPool();
     let q = pickQuestion(pool, targets, recent.current) ?? pickQuestion(pool, all, recent.current);
     if (!q) {
+      // Pool ran dry: wait for the batch already in flight, or write one now.
       setQuestion(null);
       setLoading("Writing questions for you");
       try {
-        await generate(all);
+        if (prefetching.current) await prefetching.current;
+        pool = await loadPool();
+        if (!pickQuestion(pool, all, recent.current)) await generate(all);
       } catch (err) {
         setLoading("");
         return setError((err as Error).message);
       }
       setLoading("");
-      pool = fresh(await db.questions.where("[kitId+origin]").equals([kitId, "smart"]).toArray());
+      pool = await loadPool();
       q = pickQuestion(pool, targets, recent.current) ?? pickQuestion(pool, all, recent.current);
       if (!q) return setError("Couldn't create questions for this material. Try again or change the focus.");
-    } else if (needsMore(pool, targets) && !prefetching.current) {
-      // Top up in the background so the next question is instant.
-      prefetching.current = true;
-      generate(all)
-        .catch(() => {})
-        .finally(() => (prefetching.current = false));
     }
+    topUp(all, pool);
     // Swap everything in one render so the old question never flashes back as unanswered.
     setPhase("answering");
     setPicked([]);
@@ -147,6 +156,8 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
     })();
     saving.current = save;
     await save;
+    const all = await db.concepts.where("kitId").equals(kitId).sortBy("order");
+    topUp(all, await loadPool());
   };
 
   const choose = (i: number) => {

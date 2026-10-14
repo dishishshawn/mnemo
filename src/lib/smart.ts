@@ -109,15 +109,23 @@ export function applyAnswer(c: Concept, score: number, usedHint: boolean, now = 
   };
 }
 
-/** How many unasked questions to keep ready before generating more. */
-export const POOL_LOW_WATER = 3;
+/**
+ * How many askable questions to keep ready before generating more. A batch takes 10 to 30 s to
+ * write and multiple choice goes at about 10 s a question, so eight is enough runway that the
+ * next batch lands before the pool runs dry.
+ */
+export const POOL_LOW_WATER = 8;
+/** Of those, how many should be on the concepts being targeted right now. */
+export const TARGET_LOW_WATER = 4;
 /** Questions per Gemini call. Each call rereads the material, so bigger batches are cheaper per question. */
 export const BATCH_SIZE = 16;
 
+/** True when the pool (already filtered to the session's question types) is getting low. */
 export function needsMore(questions: Question[], targets: Concept[], now = new Date()): boolean {
   const names = new Set(targets.map((t) => t.name.toLowerCase()));
-  const ready = questions.filter((q) => isAskable(q, now) && names.has(q.concept.toLowerCase()));
-  return ready.length < POOL_LOW_WATER;
+  const ready = questions.filter((q) => isAskable(q, now));
+  const onTarget = ready.filter((q) => names.has(q.concept.toLowerCase()));
+  return ready.length < POOL_LOW_WATER || onTarget.length < TARGET_LOW_WATER;
 }
 
 /** Maps a concept name from the model onto the kit's concept list (models paraphrase names). */
