@@ -196,6 +196,17 @@ async function run(name, viewport, colorScheme) {
   await page.getByRole("button", { name: "Next question" }).click();
   await page.getByText(/^Question \d+/).waitFor();
 
+  // Classic study layout behind the setting: scrolling page with the concept strip inline.
+  await page.goto(`${BASE}#/settings`);
+  await page.getByRole("button", { name: "Classic", exact: true }).click();
+  await page.goto(`${kitUrl}/smart`);
+  await page.getByText(/^Question \d+/).waitFor({ timeout: 15000 });
+  await page.getByText("← Back").waitFor();
+  await page.getByText("Concept mastery").waitFor();
+  await shot("07a-smart-classic");
+  await page.goto(`${BASE}#/settings`);
+  await page.getByRole("button", { name: "One screen", exact: true }).click();
+
   // Short answers: its own section, written answers only.
   await page.goto(`${kitUrl}/short`);
   await page.getByPlaceholder("Explain in your own words…").waitFor({ timeout: 15000 });

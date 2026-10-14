@@ -30,6 +30,11 @@
 }
 
 :root {
+  /* Height of the sticky app bar (py-3 + 36px logo + border); one-screen pages subtract it. */
+  --appbar: 61.5px;
+}
+
+:root {
   color-scheme: light;
   --bg: #eef5fc;
   --surface: #ffffff;

@@ -1,10 +1,12 @@
 import clsx from "clsx";
-import { Check, Eye, Lightbulb, Sparkles, Target, X } from "lucide-react";
+import { ChartColumn, Check, ChevronLeft, Eye, Lightbulb, Sparkles, Target, X } from "lucide-react";
+import { Link } from "react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { InlineMarkdown, Markdown } from "../components/Markdown";
 import { useStudyPlan } from "../components/ExamPlan";
 import { PenguinSays, type Mood } from "../components/Penguin";
-import { Badge, Button, Card, ErrorBox, inputClass, PageHeader, Progress, Spinner, MissingKit } from "../components/ui";
+import { Badge, Button, Card, ErrorBox, inputClass, Modal, PageHeader, Progress, Spinner, MissingKit } from "../components/ui";
+import { useSettings } from "../lib/settings";
 import { db, newId, type Concept, type Question } from "../lib/db";
 import { useConcepts, useKit } from "../lib/hooks";
 import { applyAnswer, BATCH_SIZE, levelOf, needsMore, pickQuestion, pickTargets } from "../lib/smart";
@@ -42,6 +44,9 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
   const types = TYPES[mode];
   const concepts = useConcepts(kitId);
   const plan = useStudyPlan(kitId, kit?.examDate);
+  // "classic" is the pre-2026-10-14 scrolling layout, kept behind a setting while the one-screen
+  // layout is being tried out.
+  const classic = useSettings().studyLayout === "classic";
   const [steer, setSteer] = useState("");
   const [focus, setFocus] = useState<string[]>([]);
   const [question, setQuestion] = useState<Question | null>(null);
@@ -54,6 +59,7 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
   const [error, setError] = useState("");
   const [round, setRound] = useState({ answered: 0, score: 0 });
   const [showSetup, setShowSetup] = useState(false);
+  const [showMastery, setShowMastery] = useState(false);
   const recent = useRef<string[]>([]);
   /** The in-flight top-up, so an empty pool waits for it instead of starting a second one. */
   const prefetching = useRef<Promise<void> | null>(null);
@@ -61,6 +67,12 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
   const advancing = useRef(false);
   const askedIds = useRef(new Set<string>());
   const saving = useRef<Promise<unknown>>(Promise.resolve());
+  /** The hint or the result box; the card scrolls itself there when one appears. */
+  const reveal = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (phase !== "answering") reveal.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [phase]);
 
   const targetsFor = useCallback((all: Concept[]) => pickTargets(all, 4, new Date(), focus), [focus]);
 
@@ -215,8 +227,9 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
 
   const currentConcept = concepts.find((c) => c.name === question?.concept);
 
-  return (
-    <div className="mx-auto max-w-2xl">
+  if (classic)
+    return (
+      <div className="mx-auto max-w-2xl">
       <PageHeader
         title={TITLES[mode]}
         subtitle={kit.title}
@@ -386,7 +399,12 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
               )}
               <Markdown className="text-sm">{question.explanation}</Markdown>
               {roundDone ? (
-                <RoundSummary answered={ROUND} score={round.score} concepts={concepts} onContinue={keepGoing} />
+                <>
+                  <RoundSummary answered={ROUND} score={round.score} concepts={concepts} />
+                  <Button onClick={keepGoing} className="w-full">
+                    Keep going
+                  </Button>
+                </>
               ) : (
                 <Button onClick={next} loading={!!loading} className="w-full">
                   Next question
@@ -397,12 +415,205 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
         </Card>
       )}
 
-      <ConceptStrip concepts={concepts} active={question?.concept} />
+      <div className="mt-6">
+        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Concept mastery</div>
+        <ConceptStrip concepts={concepts} active={question?.concept} />
+      </div>
+    </div>
+  );
+
+  const mood: Mood = loading && !question ? "reading" : !question ? "idle" : phase === "answering" ? "thinking" : phase === "retry" ? "idea" : (outcome?.score ?? 0) >= 0.8 ? "cheer" : "oops";
+  const line = mood === "reading" ? loading : pick(LINES[mood], (question?.id ?? "") + phase);
+  const progressValue = (round.answered % ROUND) / ROUND || (roundDone ? 1 : 0);
+  const progressCount = round.answered % ROUND || (roundDone ? ROUND : 0);
+
+  // One screen, no page scroll: fixed chrome top and bottom, and only the question card scrolls
+  // when an explanation runs long. Height = viewport minus the app bar and the main padding.
+  return (
+    <div className="mx-auto flex max-w-2xl flex-col gap-2.5" style={{ height: "calc(100dvh - var(--appbar) - 1.5rem - env(safe-area-inset-bottom))" }}>
+      <div className="flex items-center gap-2">
+        <Link to={`/kit/${kitId}`} className="-ml-1 rounded-full p-1.5 text-muted hover:bg-[var(--surface-2)] hover:text-[var(--text)]" aria-label="Back to kit">
+          <ChevronLeft className="size-5" />
+        </Link>
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-base font-bold leading-tight">{TITLES[mode]}</h1>
+          <p className="truncate text-xs text-muted">{kit.title}</p>
+        </div>
+        <button onClick={() => setShowMastery(true)} className="rounded-full p-2 text-muted hover:bg-[var(--surface-2)] hover:text-[var(--text)]" aria-label="Concept mastery" title="Concept mastery">
+          <ChartColumn className="size-5" />
+        </button>
+        <button onClick={() => setShowSetup(true)} className="rounded-full p-2 text-muted hover:bg-[var(--surface-2)] hover:text-[var(--text)]" aria-label="Steer" title="Steer">
+          <Target className="size-5" />
+        </button>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <Progress value={progressValue} className="h-1.5 flex-1" />
+        <span className="text-xs tabular-nums text-muted">
+          {progressCount}/{ROUND}
+        </span>
+        {plan && !plan.over && plan.questionsPerDay > 0 && (
+          <span className="text-xs text-muted">· {plan.leftToday > 0 ? `${plan.leftToday} more today` : "quota done"}</span>
+        )}
+      </div>
+
+      {error && <ErrorBox error={error} onRetry={next} />}
+      <PenguinSays mood={mood} size="sm">
+        <span className="text-xs sm:text-sm">{line}</span>
+      </PenguinSays>
+
+      {question && (
+        <Card className="animate-pop min-h-0 flex-1 overflow-y-auto p-4" key={question.id}>
+          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+            <Badge tone="brand">{question.concept}</Badge>
+            {currentConcept && <Badge>{levelOf(currentConcept)}</Badge>}
+            <Badge>{"●".repeat(question.difficulty)}{"○".repeat(3 - question.difficulty)}</Badge>
+            {question.askedAt && <Badge tone="amber">missed before</Badge>}
+          </div>
+          <InlineMarkdown className="mb-3 text-[15px] font-medium leading-snug sm:text-lg sm:leading-relaxed">{question.prompt}</InlineMarkdown>
+
+          {question.type !== "short" ? (
+            <div className="space-y-2">
+              {question.options.map((opt, i) => {
+                const isPicked = picked.includes(i);
+                const isAnswer = i === question.answerIndex;
+                const show = phase === "done";
+                return (
+                  <button
+                    key={i}
+                    onClick={() => choose(i)}
+                    disabled={phase === "done" || isPicked}
+                    className={clsx(
+                      "flex w-full items-start gap-2.5 rounded-xl border px-3 py-2 text-left transition",
+                      show && isAnswer && "border-emerald-400 bg-emerald-50 dark:bg-emerald-950/30",
+                      isPicked && !isAnswer && "animate-shake border-blush-500 bg-blush-100 dark:bg-blush-700/25",
+                      !(show && isAnswer) && !isPicked && "border-theme hover:border-brand-400 hover:bg-[var(--surface-2)]",
+                    )}
+                  >
+                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-md surface-2 text-[11px] font-semibold">
+                      {show && isAnswer ? <Check className="size-3.5 text-emerald-600" /> : isPicked ? <X className="size-3.5 text-rose-600" /> : i + 1}
+                    </span>
+                    <InlineMarkdown className="flex-1 text-[13px] leading-snug sm:text-sm">{opt}</InlineMarkdown>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            phase !== "done" && (
+              <textarea
+                className={clsx(inputClass, "min-h-24")}
+                placeholder="Explain in your own words…"
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && (e.metaKey || e.ctrlKey) && submitShort()}
+              />
+            )
+          )}
+
+          {phase === "retry" && (
+            <div ref={reveal} className="mt-3 flex gap-2.5 rounded-xl bg-butter-100 p-3 text-sm leading-snug text-butter-800 dark:bg-butter-800/30 dark:text-butter-200">
+              <Lightbulb className="mt-0.5 size-4 shrink-0" />
+              <div className="space-y-1">
+                {feedback ? <InlineMarkdown>{feedback}</InlineMarkdown> : <b>Not quite. Here's a nudge:</b>}
+                <InlineMarkdown>{question.hint}</InlineMarkdown>
+              </div>
+            </div>
+          )}
+
+          {phase === "done" && outcome && (
+            <div ref={reveal} className="mt-3 space-y-2.5">
+              <div
+                className={clsx(
+                  "rounded-xl p-3 text-sm font-medium leading-snug",
+                  outcome.score >= 0.8
+                    ? "bg-emerald-50 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"
+                    : outcome.score > 0
+                      ? "bg-butter-100 text-butter-800 dark:bg-butter-800/30 dark:text-butter-200"
+                      : "bg-blush-100 text-blush-700 dark:bg-blush-700/25 dark:text-blush-200",
+                )}
+              >
+                {outcome.score >= 0.8 ? "Nice, that's right." : outcome.score > 0 ? "Partly there." : "Let's lock this one in."}
+                {outcome.feedback && <InlineMarkdown className="mt-1 font-normal">{outcome.feedback}</InlineMarkdown>}
+              </div>
+              {question.type === "short" && (
+                <div className="rounded-xl surface-2 p-3 text-sm">
+                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">Model answer</div>
+                  <InlineMarkdown>{question.answer}</InlineMarkdown>
+                </div>
+              )}
+              <Markdown className="text-sm leading-snug">{question.explanation}</Markdown>
+              {roundDone && <RoundSummary answered={ROUND} score={round.score} concepts={concepts} />}
+            </div>
+          )}
+        </Card>
+      )}
+
+      {question && (
+        <div className="flex items-center gap-2">
+          {phase !== "done" ? (
+            <>
+              <button onClick={giveUp} className="flex items-center gap-1.5 rounded-full px-2 py-2 text-sm text-muted hover:text-[var(--text)]">
+                <Eye className="size-4" /> Show me the answer
+              </button>
+              {question.type === "short" && (
+                <Button onClick={submitShort} loading={!!loading} disabled={!text.trim()} className="ml-auto flex-1">
+                  {phase === "retry" ? "Try again" : "Check answer"}
+                </Button>
+              )}
+            </>
+          ) : (
+            <Button onClick={roundDone ? keepGoing : next} loading={!!loading} className="w-full">
+              {roundDone ? "Keep going" : "Next question"}
+            </Button>
+          )}
+        </div>
+      )}
+
+      <Modal open={showSetup} onClose={() => setShowSetup(false)} title="Steer the session">
+        <div className="space-y-3">
+          <div>
+            <div className="mb-2 text-sm font-medium">Focus on concepts</div>
+            <div className="flex flex-wrap gap-1.5">
+              {concepts.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => setFocus((f) => (f.includes(c.name) ? f.filter((x) => x !== c.name) : [...f, c.name]))}
+                  className={clsx(
+                    "rounded-full px-2.5 py-1 text-xs font-medium transition",
+                    focus.includes(c.name) ? "bg-brand-300 text-brand-900 dark:bg-brand-500 dark:text-white" : "surface-2 text-muted hover:text-[var(--text)]",
+                  )}
+                >
+                  {c.name}
+                </button>
+              ))}
+            </div>
+          </div>
+          <input
+            className={inputClass}
+            placeholder='Tell it what you want, e.g. "harder questions", "exam on Friday, focus on chapter 3"'
+            value={steer}
+            onChange={(e) => setSteer(e.target.value)}
+          />
+          <Button
+            className="w-full"
+            onClick={() => {
+              setShowSetup(false);
+              next();
+            }}
+          >
+            Apply
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal open={showMastery} onClose={() => setShowMastery(false)} title="Concept mastery">
+        <ConceptStrip concepts={concepts} active={question?.concept} />
+      </Modal>
     </div>
   );
 }
 
-function RoundSummary({ answered, score, concepts, onContinue }: { answered: number; score: number; concepts: Concept[]; onContinue: () => void }) {
+function RoundSummary({ answered, score, concepts }: { answered: number; score: number; concepts: Concept[] }) {
   const weakest = [...concepts].filter((c) => c.attempts > 0).sort((a, b) => a.mastery - b.mastery).slice(0, 3);
   return (
     <Card className="space-y-3 border-brand-300 p-4">
@@ -414,17 +625,13 @@ function RoundSummary({ answered, score, concepts, onContinue }: { answered: num
           Coming up next: more on <b>{weakest.map((c) => c.name).join(", ")}</b>.
         </p>
       )}
-      <Button onClick={onContinue} className="w-full">
-        Keep going
-      </Button>
     </Card>
   );
 }
 
 function ConceptStrip({ concepts, active }: { concepts: Concept[]; active?: string }) {
   return (
-    <div className="mt-6">
-      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Concept mastery</div>
+    <div>
       <div className="grid gap-2 sm:grid-cols-2">
         {concepts.map((c) => (
           <div key={c.id} className={clsx("rounded-xl px-3 py-2 transition", c.name === active ? "surface border-brand-400" : "surface-2")}>

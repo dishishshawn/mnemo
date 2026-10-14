@@ -14,6 +14,8 @@ export interface Settings {
   podcastVoices: [string, string];
   podcastMinutes: number;
   theme: "system" | "light" | "dark";
+  /** Smart Study / Short answers layout. "compact" fits one screen; "classic" is the older scrolling page. */
+  studyLayout: "compact" | "classic";
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -26,6 +28,7 @@ export const DEFAULT_SETTINGS: Settings = {
   podcastVoices: ["Puck", "Kore"],
   podcastMinutes: 8,
   theme: "light",
+  studyLayout: "compact",
 };
 
 export const TTS_VOICES = [

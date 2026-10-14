@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { useLiveQuery } from "dexie-react-hooks";
 import { BookOpen, CloudAlert, CloudCheck, Plus, RefreshCw, Settings as SettingsIcon } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
-import { Link, NavLink } from "react-router";
+import { Link, NavLink, useLocation } from "react-router";
 import { db } from "../lib/db";
 import { formatUsd } from "../lib/pricing";
 import { useSettings } from "../lib/settings";
@@ -23,6 +23,10 @@ function useTheme() {
 export function Layout({ children }: { children: ReactNode }) {
   useTheme();
   const sync = useSyncStatus();
+  // Study loops are laid out to fit one screen, so they get tight padding and no bottom gap.
+  const { pathname } = useLocation();
+  const { studyLayout } = useSettings();
+  const compact = /\/(smart|short)$/.test(pathname) && studyLayout !== "classic";
   const spent = useLiveQuery(async () => {
     const rows = await db.usage.where("at").aboveOrEqual(monthStart()).toArray();
     return rows.reduce((n, r) => n + r.costUsd, 0);
@@ -74,7 +78,7 @@ export function Layout({ children }: { children: ReactNode }) {
           </NavLink>
         </div>
       </header>
-      <main className="mx-auto max-w-5xl px-4 pt-6 pb-24">{children}</main>
+      <main className={clsx("mx-auto max-w-5xl px-4", compact ? "py-3" : "pt-6 pb-24")}>{children}</main>
     </div>
   );
 }

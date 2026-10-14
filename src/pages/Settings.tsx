@@ -33,6 +33,18 @@ export default function Settings() {
             { value: "dark", label: "Dark" },
           ]}
         />
+        <div>
+          <div className="mb-1.5 text-sm font-medium">Study screen</div>
+          <Segmented
+            value={s.studyLayout}
+            onChange={(studyLayout) => updateSettings({ studyLayout })}
+            options={[
+              { value: "compact", label: "One screen" },
+              { value: "classic", label: "Classic" },
+            ]}
+          />
+          <p className="mt-1.5 text-xs text-muted">One screen keeps Smart Study and Short answers from scrolling; the answer button stays at the bottom. Classic is the previous layout.</p>
+        </div>
       </Card>
       <Backup />
     </div>
