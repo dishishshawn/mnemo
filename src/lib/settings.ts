@@ -16,6 +16,8 @@ export interface Settings {
   theme: "system" | "light" | "dark";
   /** Smart Study / Short answers layout. "compact" fits one screen; "classic" is the older scrolling page. */
   studyLayout: "compact" | "classic";
+  /** Size on laptops and monitors; phones and portrait tablets are unaffected. Per device. */
+  screenScale: "standard" | "larger" | "largest";
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -29,6 +31,7 @@ export const DEFAULT_SETTINGS: Settings = {
   podcastMinutes: 8,
   theme: "light",
   studyLayout: "compact",
+  screenScale: "standard",
 };
 
 export const TTS_VOICES = [
@@ -74,7 +77,7 @@ export function getSettings(): Settings {
 }
 
 /** Device-only settings that don't sync. */
-export const LOCAL_ONLY: (keyof Settings)[] = ["theme"];
+export const LOCAL_ONLY: (keyof Settings)[] = ["theme", "screenScale"];
 
 function write(next: Settings) {
   cached = next;

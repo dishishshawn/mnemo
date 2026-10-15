@@ -45,6 +45,19 @@ export default function Settings() {
           />
           <p className="mt-1.5 text-xs text-muted">One screen keeps Smart Study and Short answers from scrolling; the answer button stays at the bottom. Classic is the previous layout.</p>
         </div>
+        <div>
+          <div className="mb-1.5 text-sm font-medium">Size on big screens</div>
+          <Segmented
+            value={s.screenScale}
+            onChange={(screenScale) => updateSettings({ screenScale })}
+            options={[
+              { value: "standard", label: "Standard" },
+              { value: "larger", label: "Larger" },
+              { value: "largest", label: "Largest" },
+            ]}
+          />
+          <p className="mt-1.5 text-xs text-muted">Enlarges everything on laptops and monitors, like zooming in: Larger is 112% (125% on wide monitors), Largest 125% (150%). Phones aren't affected. Set separately on each device.</p>
+        </div>
       </Card>
       <Backup />
     </div>

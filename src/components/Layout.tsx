@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { useLiveQuery } from "dexie-react-hooks";
 import { BookOpen, CloudAlert, CloudCheck, Plus, RefreshCw, Settings as SettingsIcon } from "lucide-react";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, type ReactNode } from "react";
 import { Link, NavLink, useLocation } from "react-router";
 import { db } from "../lib/db";
 import { formatUsd } from "../lib/pricing";
@@ -21,8 +21,17 @@ function useTheme() {
   }, [theme]);
 }
 
+/** Before paint, so a saved size doesn't flash at the standard one first. */
+function useScreenScale() {
+  const { screenScale } = useSettings();
+  useLayoutEffect(() => {
+    document.documentElement.dataset.scale = screenScale;
+  }, [screenScale]);
+}
+
 export function Layout({ children }: { children: ReactNode }) {
   useTheme();
+  useScreenScale();
   const sync = useSyncStatus();
   // Study loops are laid out to fit one screen, so they get tight padding and no bottom gap.
   const { pathname } = useLocation();

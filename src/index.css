@@ -31,20 +31,27 @@
 
 :root {
   /* Height of the sticky app bar (py-3 + size-9 logo + border); one-screen pages subtract it.
-     Kept in rem so it tracks the desktop font-size step below. */
+     Kept in rem so it tracks the large-screen size steps below. */
   --appbar: calc(3.75rem + 1.5px);
 }
 
-/* Bigger by default on large screens: everything is rem-based, so this is the same as browser
-   zoom (125% on laptops and landscape tablets, 150% on desktop monitors). Breakpoints are
-   unaffected because media queries use the browser's base font size, not this one. */
+/* Optional bigger sizes on large screens (Settings > Appearance; data-scale on <html>, set in
+   Layout.tsx). Everything is rem-based, so this is the same as browser zoom, from laptops and
+   landscape tablets (64rem) and more on desktop monitors (80rem). Breakpoints are unaffected
+   because media queries use the browser's base font size, not this one. */
 @media (min-width: 64rem) {
-  html {
+  html[data-scale="larger"] {
+    font-size: 112.5%;
+  }
+  html[data-scale="largest"] {
     font-size: 125%;
   }
 }
 @media (min-width: 80rem) {
-  html {
+  html[data-scale="larger"] {
+    font-size: 125%;
+  }
+  html[data-scale="largest"] {
     font-size: 150%;
   }
 }
