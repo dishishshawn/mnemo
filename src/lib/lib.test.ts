@@ -6,6 +6,7 @@ import type { Concept, Question, Source } from "./db";
 import { newCard, review, Rating } from "./srs";
 import { pcmToWav } from "./wav";
 import { decodeAudio, parseJson } from "./gemini";
+import { repairLatex } from "./latex";
 import { chunkScript, fitScript } from "./study";
 import { choosePdfReader, stripFence } from "./ingest";
 import { youtubeId } from "./extract";
@@ -181,6 +182,18 @@ describe("parsing", () => {
     expect(parseJson<{ a: number }>('{"a":1}')).toEqual({ a: 1 });
     expect(parseJson<{ a: number }>('```json\n{"a":1}\n```')).toEqual({ a: 1 });
     expect(() => parseJson("{nope")).toThrow(/malformed/);
+  });
+
+  it("restores LaTeX backslashes that JSON escapes ate", () => {
+    // Gemini wrote single backslashes, so \t and \b became a tab and a backspace.
+    const raw = String.raw`{"prompt":"a nitrile ($\text{R}-\text{C}\boldsymbol{\triple}\text{N}$) reacts"}`;
+    expect(parseJson<{ prompt: string }>(raw).prompt).toBe(String.raw`a nitrile ($\text{R}-\text{C}\boldsymbol{\triple}\text{N}$) reacts`);
+    expect(repairLatex("$\frac{1}{2} \times \rho \nu$")).toBe(String.raw`$\frac{1}{2} \times \rho \nu$`);
+    expect(repairLatex("$$\n\nabla f\n$$")).toBe("$$\n\\nabla f\n$$");
+    // Real newlines and tabs stay: outside math, before a plain variable, and after an escaped dollar.
+    expect(repairLatex("Line one\nnext\tcol $$\nx = 1\n$$")).toBe("Line one\nnext\tcol $$\nx = 1\n$$");
+    expect(repairLatex("$$\ne^x$$")).toBe("$$\ne^x$$");
+    expect(repairLatex("costs \\$5\tor \\$6")).toBe("costs \\$5\tor \\$6");
   });
 
   it("strips a fence wrapping a whole Markdown answer", () => {
