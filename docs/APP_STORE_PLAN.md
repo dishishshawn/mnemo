@@ -31,6 +31,29 @@ Gemini features from under-18s. Launched first outside the EEA, UK and Switzerla
 "Mnemo" is taken. Wrapped with Capacitor 8 (needs Xcode 26 on a Mac) with enough native features to
 pass Guideline 4.2.
 
+## Update 2026-10-16
+
+- Shawn is already enrolled in the Apple Developer Program.
+- **iOS 27 and Xcode 27 have shipped** (iOS 27.0.1 on 2026-09-28; Xcode 27.1 on 2026-10-15). Apple
+  Foundation Models on Private Cloud Compute (32K context, no key, no cloud cost for Small Business
+  Program developers under 2M downloads, needs an entitlement request, unpublished per-user daily
+  limits, Apple Intelligence devices only) is available now, not "v1.2". Apple's acceptable-use
+  rules for it have no age clause and nothing against education:
+  https://developer.apple.com/support/terms/acceptable-use-requirements-for-the-foundation-models-framework/
+- **Vercel Hobby is non-commercial** (checked 2026-10-16; team `dishishshawns-projects` is on
+  Hobby): "Hobby teams are restricted to non-commercial personal use only."
+  https://vercel.com/docs/limits/fair-use-guidelines
+- **The penguin art resembles Sanrio's Tuxedosam** (blue penguin, sailor hat with ribbon, bow tie).
+  Shawn says it is AI-generated and free to use. That covers the generator's terms, not Sanrio's
+  rights in the character's look, so before release regenerate the poses without the sailor hat and
+  bow tie (Guideline 5.2.1). Keep the glasses, book and palette.
+- **Decided: Apple's models are the default AI engine** on iOS (on-device for short tasks, Private
+  Cloud Compute for kit generation). The user's own Gemini key is optional, for long PDFs, podcasts,
+  older devices, or when Apple's daily per-user limit runs out. The web PWA stays Gemini-only
+  (browsers have no Apple model). Shawn's AI cost per user is $0 either way. Capacitor options:
+  `@capacitor/local-llm` (official, experimental), Capawesome's LLM plugin (Insiders),
+  `@capgo/capacitor-llm`. PCC is new in iOS 27 and may need its own small Swift bridge; check.
+
 ## Decisions Shawn must confirm before code changes
 
 Ask these; don't assume. The recommendation is in bold.
@@ -38,18 +61,27 @@ Ask these; don't assume. The recommendation is in bold.
 - [ ] **Name.** Bare "Mnemo" is unusable. Shortlist, all clean on 5 storefronts and in US
       trademarks on 2026-10-14: **Memorook** (memory + rookery, a penguin colony), Recallery,
       Penmemo, Memoglyph. The real test is creating the app record in App Store Connect.
+      2026-10-16: Shawn wants something less "Mnemo"-like and more distinctive. New shortlist, none
+      with an exact or prefix App Store match (US and UK) or a live US mark in classes 9/41/42:
+      **Interleaf**, Sphenix, Discenda, Scholion, Tuxford. Checked and rejected (taken or marked):
+      Scholia, Kenning, Aletheia, Quaestio, Paideia, Lemma, Cairn, Quire, Noesis, Mimir, Muninn,
+      Noema, Eunoia, Castalia, Gnomon, Octavo. Penguin name still open (Dewey, Humboldt, Kororā,
+      Ernest, Pascal suggested). Tools: `tmsearch.uspto.gov/prod-stage-v1-0-0/tmsearch` (POST,
+      Elasticsearch query) for marks; the iTunes Search API rate-limits at about 20 calls a minute.
 - [ ] **What is free and what the unlock adds.** Recommended: free = manual decks, SRS review,
       imports, exam planner, two bundled demo kits, one trial AI kit on the user's key. Unlock =
       unlimited AI kits, Smart Study generation, short-answer grading, Explain it back, podcasts,
       sync, export.
-- [ ] **Price.** **$2.99 launch, $4.99 list** (one-time, never a subscription).
-- [ ] **The free web PWA.** It would compete with the paid app. Recommended: keep it as the free
-      web-only version, fully unlocked (his girlfriend uses it), and never link to it from the iOS
-      app.
-- [ ] **Sync backend hosting for a commercial app.** Vercel's Hobby plan is for non-commercial use.
-      Check which plan the `mnemo` project is on (`npx vercel` CLI, team dishishshawns-projects).
-      Options: upgrade to Pro, or accept the risk until there are sales. Verify the current Hobby
-      terms before advising.
+- [x] **Price.** Decided 2026-10-16: free download plus a **$2.99 one-time unlock** ($4.99 list
+      later). A flat price works because the AI runs on Apple's models or the user's own key, so
+      Shawn pays no inference cost.
+- [x] **The free web PWA.** Decided 2026-10-16: it stays free and fully unlocked but **is renamed
+      too**, so the brand is the same everywhere. Storage identifiers still stay `mnemo`. Never link
+      to it from the iOS app.
+- [x] **Sync backend hosting for a commercial app.** Decided 2026-10-16 (Shawn had no preference):
+      move `api/sync.ts` to a **Cloudflare Worker with R2** before launch, and point both the web
+      and iOS builds at it. Vercel then serves only the free static site. Vercel Pro ($20/month)
+      would need about 95 sales a year to pay for itself. Shawn needs a free Cloudflare account.
 - [ ] **Does the Gemini key keep syncing between devices?** Today it rides inside the encrypted
       sync snapshot (`src/lib/sync.ts` snapshots all settings except `LOCAL_ONLY`). It is end-to-end
       encrypted, so keeping it is defensible; the plan below moves it to the Keychain on iOS.
@@ -60,8 +92,11 @@ Ask these; don't assume. The recommendation is in bold.
 
 These have the longest waits (1 to 3 weeks), so they start before any code.
 
-- [ ] Enroll in the Apple Developer Program as an individual ($99/year). His legal name shows as
-      the seller. https://developer.apple.com/programs/enroll/
+- [x] Enroll in the Apple Developer Program as an individual ($99/year). His legal name shows as
+      the seller. https://developer.apple.com/programs/enroll/ (done before 2026-10-16)
+- [ ] If Apple's models are in v1: request the Private Cloud Compute entitlement
+      (https://developer.apple.com/contact/request/private-cloud-compute/). It also requires
+      Small Business Program membership.
 - [ ] When enrollment is active, create the app record in App Store Connect with the chosen name, to
       claim it. If it's refused, use the next name on the list.
 - [ ] Accept the Paid Apps Agreement, submit the W-9 and bank details. Paid apps and in-app purchases
