@@ -22,6 +22,19 @@ export function conceptFor(text: string, concepts: { name: string; summary: stri
 
 /** A diagram needs this many usable labels to be worth cards. */
 const MIN_LABELS = 3;
+/** New diagrams start this many a day, so one run on a long lecture doesn't land hundreds of cards due at once. */
+export const DIAGRAMS_PER_DAY = 4;
+
+/**
+ * The same figure on two slides (a recap, or a build-up slide) shouldn't make two sets of cards:
+ * mostly the same labels means the same diagram.
+ */
+export function sameDiagram(a: string[], b: string[]): boolean {
+  const x = new Set(a.map((t) => t.toLowerCase()));
+  const y = new Set(b.map((t) => t.toLowerCase()));
+  const shared = [...x].filter((t) => y.has(t)).length;
+  return shared / Math.min(x.size, y.size) >= 0.7;
+}
 /** Pages looked at per run; each is one Gemini call. */
 export const PAGES_PER_RUN = 30;
 
@@ -41,6 +54,9 @@ export function toFraction(box: number[]): Box | null {
  */
 export function namesAPart(text: string, title = ""): boolean {
   if (text.length > 60 || text.split(" ").length > 8) return false;
+  // A step written as a sentence ("Genome is uncoated.") or numbered ("2. kick out OR") is a caption, not a part.
+  if (/\.$/.test(text) && text.split(" ").length >= 3) return false;
+  if (/^\d+[.)]\s/.test(text)) return false;
   if (!/\p{L}{3,}/u.test(text.replace(/\b(?:[mµnk]?[gml]|[mµn]m|ml|mg|µg|ng|min|sec|hr|°C)\b/gi, ""))) return false;
   const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
   return !title || norm(text) !== norm(title);
@@ -130,6 +146,8 @@ export interface DiagramRun {
   cards: number;
   /** Pages still waiting for a run. */
   left: number;
+  /** Over how many days the new diagrams start (DIAGRAMS_PER_DAY). */
+  days: number;
 }
 
 /** Looks at up to PAGES_PER_RUN pages and turns every labelled diagram on them into cards. */
@@ -143,6 +161,9 @@ export async function makeDiagramCards(
   if (skipped.length) await db.pages.where("id").anyOf(skipped).modify({ scanned: true });
   const batch = all.slice(0, PAGES_PER_RUN);
   const concepts = await db.concepts.where("kitId").equals(kitId).toArray();
+  const known = (await db.figures.where("kitId").equals(kitId).toArray()).map((f) => f.labels.map((l) => l.text));
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
   let done = 0;
   let figures = 0;
   let cards = 0;
@@ -189,7 +210,13 @@ export async function makeDiagramCards(
       const title = d.title?.trim() || "Diagram";
       const labels = usableLabels(region, d.labels ?? [], title);
       if (labels.length < MIN_LABELS) continue;
+      const texts = labels.map((l) => l.text);
+      if (known.some((k) => sameDiagram(k, texts))) continue;
+      known.push(texts);
+      // Counted before the awaits, so diagrams found at the same time still get their own day.
+      const day = Math.floor(figures++ / DIAGRAMS_PER_DAY);
       const { image, width, height } = await crop(page, region);
+      const due = day ? new Date(today.getTime() + day * 86_400_000) : new Date();
       const figure: Figure = { id: newId(), kitId, sourceId: page.sourceId, page: page.page, title, image, width, height, labels, createdAt: Date.now() };
       const concept = conceptFor(`${title} ${labels.map((l) => l.text).join(" ")}`, concepts);
       const deck: Flashcard[] = labels.map((l, label) => ({
@@ -200,7 +227,7 @@ export async function makeDiagramCards(
         kind: "term",
         concept,
         figure: { id: figure.id, label },
-        srs: newCard(),
+        srs: newCard(due),
         createdAt: Date.now(),
       }));
       if (!(await db.kits.get(kitId))) return;
@@ -208,7 +235,6 @@ export async function makeDiagramCards(
         await db.figures.add(figure);
         await db.flashcards.bulkAdd(deck);
       });
-      figures++;
       cards += deck.length;
     }
   };
@@ -229,5 +255,5 @@ export async function makeDiagramCards(
     }
   };
   await Promise.all([worker(), worker(), worker()]);
-  return { pages: batch.length, figures, cards, left: all.length - batch.length };
+  return { pages: batch.length, figures, cards, left: all.length - batch.length, days: Math.ceil(figures / DIAGRAMS_PER_DAY) };
 }

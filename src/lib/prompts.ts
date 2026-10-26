@@ -499,7 +499,7 @@ export interface FigureResult {
 
 export const FIGURE_PROMPT = `Find the labelled diagrams on this page: drawings, micrographs or schematics whose parts are named by text labels, often with leader lines. Ignore charts that only have axis labels, tables, and plain text.
 For each diagram give a title, its bounding box, and every label that names a part of it: the label's exact text on one line and a tight box around that text.
-Leave out panel letters (A, B, (c)), numbers and measurements on their own, scale bars, the diagram's title, credits, and sentences of explanation.
+On a printed slide with handwriting added on top, use only the printed labels; on handwritten notes, the handwritten labels are the labels. Leave out panel letters (A, B, (c)), numbered steps, numbers and measurements on their own, scale bars, the diagram's title, credits, and steps or explanations written as sentences.
 If there is no labelled diagram, return an empty list.`;
 
 // ---------- Podcast ----------

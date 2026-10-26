@@ -1,8 +1,8 @@
 // Chemical structures: drawing them with RDKit.js (WebAssembly, loaded the first time a structure
 // shows up) and checking the ones Gemini writes. Before generated questions, cards or sheets are
-// saved, every named structure is looked up by its name (PubChem, then OPSIN for systematic names
-// PubChem doesn't list) and compared with the structure Gemini drew. A name paired with the wrong
-// structure means the item can't be trusted.
+// saved, every named structure is looked up by its name (OPSIN, then PubChem for names OPSIN can't
+// parse) and compared with the structure Gemini drew. A name paired with the wrong structure means
+// the item can't be trusted.
 
 import type { MainModule } from "@rdkit/rdkit";
 import { db } from "./db";
@@ -191,7 +191,10 @@ export async function lookupName(name: string): Promise<Lookup | null | undefine
   const cached = await db.molecules.get(id).catch(() => undefined);
   if (cached && (cached.smiles || Date.now() - cached.at < MISS_TTL)) return cached.smiles ? { smiles: cached.smiles, source: cached.source! } : null;
   let unreachable = false;
-  for (const source of [pubchem, opsin]) {
+  // OPSIN first: it parses a systematic name into exactly the structure the name spells out.
+  // PubChem's name search matches synonyms loosely; it answered "but-2-ynedinitrile" with
+  // putrescine. It's there for the trade and common names OPSIN doesn't know.
+  for (const source of [opsin, pubchem]) {
     try {
       const hit = await source(name.trim());
       if (hit) {

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { checkCalculation, evaluate, formatNumber, matches, numbersIn, parseAnswer } from "./calc";
 import { checkItems, checkQuestions, checkTokens, configureChem, mirror, nameHasStereo, rdkit, verifyMol } from "./chem";
 import { db, type Concept, type Question } from "./db";
-import { conceptFor, namesAPart, padded, toFraction, usableLabels } from "./figures";
+import { conceptFor, namesAPart, padded, sameDiagram, toFraction, usableLabels } from "./figures";
 import { hasMol, molsAsText, molTokens, onlyMols, repairMolTokens } from "./mol";
 import { bestPage, pageTexts, words } from "./pages";
 import { MOL_RULE, NUMERIC_RULE, questionGuidance, questionTask } from "./prompts";
@@ -237,7 +237,9 @@ describe("checking structures against their names", () => {
         const name = url.includes("pubchem")
           ? decodeURIComponent(String(init?.body).replace(/^name=/, ""))
           : decodeURIComponent(url.split("/ws/")[1].replace(/\.json$/, ""));
-        const smiles = known[name.toLowerCase()];
+        // PubChem's synonym search really did answer this name with putrescine.
+        if (url.includes("pubchem") && name === "but-2-ynedinitrile") return Response.json({ PropertyTable: { Properties: [{ SMILES: "C(CCN)CN" }] } });
+        const smiles = url.includes("pubchem") ? known[name.toLowerCase()] : { ...known, "but-2-ynedinitrile": "N#CC#CC#N" }[name.toLowerCase()];
         if (!smiles) return new Response("{}", { status: 404 });
         if (smiles === "not json") return new Response("<html>Sign in to the Wi-Fi</html>", { status: 200 });
         return url.includes("pubchem")
@@ -254,6 +256,8 @@ describe("checking structures against their names", () => {
     expect(await verifyMol(R, { smiles: "CCC(C)Br", name: "(R)-2-bromobutane" })).toEqual({ status: "fixed", smiles: "CC[C@@H](C)Br" });
     expect(await verifyMol(R, { smiles: "CC[C@H](C)Br", name: "(R)-2-bromobutane" })).toMatchObject({ status: "mismatch" });
     expect(await verifyMol(R, { smiles: "C/C=C\\C", name: "trans-2-butene" })).toMatchObject({ status: "mismatch" });
+    // OPSIN's parse wins over PubChem's loose synonym match.
+    expect(await verifyMol(R, { smiles: "N#CC#CC#N", name: "but-2-ynedinitrile" })).toEqual({ status: "ok" });
     // A counter-ion doesn't make it a different compound.
     expect(await verifyMol(R, { smiles: "CC[O-]", name: "sodium ethoxide" })).toEqual({ status: "ok" });
   });
@@ -358,6 +362,16 @@ describe("diagram labels", () => {
     for (const t of ["Exhaust valve (to remove steam after sterilization)", "Perforated shelf", "Air", "Steam jacket"]) expect(namesAPart(t, "Steam autoclave diagram")).toBe(true);
     for (const t of ["A.", "(b)", "100%", "1.25 µg/ml", "10 µg/ml", "D100", "10 µm"]) expect(namesAPart(t)).toBe(false);
     expect(namesAPart("Steam autoclave", "Steam autoclave")).toBe(false);
+    // Steps written as sentences, from a real phage life-cycle slide.
+    expect(namesAPart("Genome is uncoated.")).toBe(false);
+    expect(namesAPart("Phage lyses cell, and progeny phages are released.")).toBe(false);
+    expect(namesAPart("Tail fibers")).toBe(true);
+    // Numbered mechanism steps from her handwritten acetal notes.
+    expect(namesAPart("1. nuc attack")).toBe(false);
+    expect(namesAPart("pyridine")).toBe(true);
+    const salmonella = ["LPS", "OmpF", "TolC", "AcrA", "AcrB", "Flagellar motor"];
+    expect(sameDiagram(salmonella, [...salmonella.slice(0, 5), "Flagellar hook"])).toBe(true);
+    expect(sameDiagram(["Envelope", "Tegument", "Capsid"], ["Genome", "Head", "Collar", "Neck"])).toBe(false);
     const [l] = usableLabels([0, 0, 1, 1], [{ text: "Flask of\nsample", box: [100, 100, 150, 300] }]);
     expect(l.text).toBe("Flask of sample");
   });

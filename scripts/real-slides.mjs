@@ -1,14 +1,15 @@
-// Real run of the slide features: real Gemini, real lecture PDFs, real browser. Builds a kit, then
-// checks the pages were kept, does a Smart Study round (noting calculations and the slides shown
-// after misses), makes diagram cards, and dumps what came out with the cost.
-//   GEMINI_API_KEY=... node scripts/real-slides.mjs <baseUrl> <pdf>...
+// Real run of the slide and chemistry features: real Gemini, real lecture PDFs, real browser.
+// Builds a kit, then checks the pages were kept, makes the reaction sheet (organic chemistry), does
+// a Smart Study round (noting structures, calculations and the slides shown after misses), makes
+// diagram cards, and dumps what came out with the cost.
+//   GEMINI_API_KEY=... [OUT=scratch/real-x] node scripts/real-slides.mjs <baseUrl> <pdf>...
 import { chromium } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 
 const [BASE, ...PDFS] = process.argv.slice(2);
 const KEY = process.env.GEMINI_API_KEY;
 if (!BASE || !PDFS.length || !KEY) throw new Error("usage: GEMINI_API_KEY=... node scripts/real-slides.mjs <baseUrl> <pdf>...");
-const OUT = "scratch/real-slides";
+const OUT = process.env.OUT ?? "scratch/real-slides";
 mkdirSync(OUT, { recursive: true });
 const QUESTIONS = Number(process.env.QUESTIONS ?? 12);
 
@@ -59,6 +60,20 @@ try {
   for (const s of sources) note(`source ${s.name}: via ${s.via}, ${s.text.length} chars, page markers ${(s.text.match(/<!-- page \d+ -->/g) ?? []).length}, structure tokens ${(s.text.match(/\{\{mol:/g) ?? []).length}`);
   writeFileSync(`${OUT}/sources.md`, sources.map((s) => `# ${s.name}\n\n${s.text}`).join("\n\n---\n\n"));
 
+  // Organic chemistry: the reaction sheet.
+  if (kit.subject === "organic-chemistry") {
+    await page.goto(`${kitUrl}/reactions`);
+    await page.getByRole("button", { name: /Make the sheet/ }).click();
+    note("making the reaction sheet");
+    await page.getByRole("button", { name: "Make flashcards" }).waitFor({ timeout: 300_000 });
+    await page.waitForTimeout(1500);
+    await page.screenshot({ path: `${OUT}/reactions.png`, fullPage: true });
+    const sheet = (await table("outputs")).find((o) => o.type === "reactions");
+    const reactions = JSON.parse(sheet.content).reactions;
+    writeFileSync(`${OUT}/reactions.json`, JSON.stringify(reactions, null, 2));
+    note(`reaction sheet: ${reactions.length} reactions`);
+  }
+
   // Smart Study: first option first (often wrong, so the hint and the slide show), then the second.
   await page.goto(`${kitUrl}/smart`);
   const transcript = [];
@@ -69,6 +84,11 @@ try {
     const card = page.locator(".animate-pop").first();
     const prompt = (await card.locator(".prose").first().innerText()).trim();
     const entry = { n, prompt };
+    const drawn = await card.getByRole("img", { name: "Chemical structure" }).count();
+    if (drawn) {
+      entry.structures = drawn;
+      await page.screenshot({ path: `${OUT}/structures-${n}.png`, fullPage: true });
+    }
     const numeric = page.getByPlaceholder("Your answer, e.g. 3.2e8");
     if (await numeric.count()) {
       entry.type = "numeric";
@@ -103,9 +123,20 @@ try {
     await page.getByRole("button", { name: /Next question|Keep going/ }).first().click();
   }
   writeFileSync(`${OUT}/smart-study.json`, JSON.stringify(transcript, null, 2));
+  // Every question written so far, as stored, structure tokens and all.
+  const questions = await table("questions");
+  writeFileSync(
+    `${OUT}/questions.md`,
+    questions
+      .map((q) => `- [${q.type} d${q.difficulty}${q.flagged ? " flagged" : ""}] ${q.prompt}\n${q.options.map((o, i) => `    ${i === q.answerIndex ? "*" : " "} ${o}`).join("\n")}${q.numeric ? `\n    = ${q.numeric.value} ${q.numeric.unit} (${q.numeric.expression})` : ""}\n    ${q.explanation}`)
+      .join("\n"),
+  );
+  note(`questions stored: ${questions.length} (${questions.filter((q) => /\{\{mol:/.test(q.prompt + q.options.join(""))).length} with structures, ${questions.filter((q) => q.numeric).length} calculations)`);
 
   // Diagram cards.
   await page.goto(`${kitUrl}/cards`);
+  await page.waitForTimeout(1500);
+  if (!(await page.getByRole("button", { name: "Diagram cards" }).count())) throw new Error("No pages to look at for diagram cards");
   await page.getByRole("button", { name: "Diagram cards" }).click();
   await page.getByRole("button", { name: "Find diagrams" }).click();
   note("finding diagrams");

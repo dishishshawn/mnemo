@@ -6,7 +6,7 @@ import { FigureView } from "../components/FigureView";
 import { InlineMarkdown } from "../components/Markdown";
 import { Badge, Button, Card, Empty, ErrorBox, Field, inputClass, Modal, PageHeader, Progress, Segmented, Spinner, MissingKit } from "../components/ui";
 import { db, newId, type Figure, type Flashcard } from "../lib/db";
-import { candidatePages, makeDiagramCards, PAGES_PER_RUN } from "../lib/figures";
+import { candidatePages, DIAGRAMS_PER_DAY, makeDiagramCards, PAGES_PER_RUN } from "../lib/figures";
 import { shuffle, useKit } from "../lib/hooks";
 import { runJob, useJob } from "../lib/jobs";
 import { formatInterval, isDue, newCard, preview, Rating, review, type Grade } from "../lib/srs";
@@ -43,7 +43,9 @@ export default function Flashcards() {
       const res = await makeDiagramCards(kitId, { signal, onProgress: (done, total) => report(`Looking for labelled diagrams: page ${done} of ${total}`) });
       setDiagramNote(
         res.cards
-          ? `Made ${res.cards} cards from ${res.figures} diagram${res.figures === 1 ? "" : "s"}.${res.left ? ` ${res.left} more pages to look at.` : ""}`
+          ? `Made ${res.cards} cards from ${res.figures} diagram${res.figures === 1 ? "" : "s"}.${
+              res.days > 1 ? ` ${DIAGRAMS_PER_DAY} diagrams start today and the rest over the next ${res.days - 1} day${res.days === 2 ? "" : "s"}, so they don't all land at once.` : ""
+            }${res.left ? ` ${res.left} more pages to look at.` : ""}`
           : `No labelled diagrams on those ${res.pages} pages.${res.left ? ` ${res.left} more to look at.` : ""}`,
       );
     });
