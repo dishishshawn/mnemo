@@ -415,11 +415,11 @@ export function syncNow(): Promise<void> {
         if (res.status === 412) continue; // another device saved first: pull, merge, try again
         if (!res.ok) throw new Error(res.status === 413 ? "Too much data to sync in one piece." : `Sync upload failed (${res.status}).`);
         st.etag = ((await res.json()) as { etag: string }).etag;
-        // Edits made during the upload stay pending, and so does a diagram added after its images went up.
+        // Edits made during the upload stay pending (each one already scheduled its own push), and so
+        // does a diagram whose image hasn't gone up yet.
         const done = new Set(st.uploadedImages ?? []);
         const imagesLeft = await db.figures.filter((f) => !!f.image && !done.has(f.id)).count();
         if (dirtyStamp() === dirtyAt && !imagesLeft) clearDirty();
-        else rerun = true;
         break;
       }
       st.lastSync = Date.now();
