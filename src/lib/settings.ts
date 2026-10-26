@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import type { Challenge } from "./smart";
 
 export type ThinkingLevel = "default" | "MINIMAL" | "LOW" | "MEDIUM" | "HIGH";
 
@@ -18,6 +19,8 @@ export interface Settings {
   studyLayout: "compact" | "classic";
   /** Size on laptops and monitors; phones and portrait tablets are unaffected. Per device. */
   screenScale: "standard" | "larger" | "largest";
+  /** How hard Smart Study pitches its questions (smart.ts CHALLENGES). */
+  challenge: Challenge;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -32,6 +35,7 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: "light",
   studyLayout: "compact",
   screenScale: "standard",
+  challenge: "balanced",
 };
 
 export const TTS_VOICES = [

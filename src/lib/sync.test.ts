@@ -10,6 +10,8 @@ import { __test, configureSync, disableSync, enableSync, installChangeTracking, 
 
 const server = new Map<string, { bytes: Uint8Array; etag: string }>();
 let failNextPutWith412 = false;
+/** Runs while the state upload is in flight, to simulate an edit landing mid-sync. */
+let duringStatePut: (() => Promise<void>) | null = null;
 let etagSeq = 0;
 
 configureSync({
@@ -35,6 +37,11 @@ configureSync({
     }
     if (isState && ifMatch && current?.etag !== ifMatch) return Response.json({}, { status: 412 });
     if (isState && !ifMatch && current) return Response.json({}, { status: 412 });
+    if (isState && duringStatePut) {
+      const edit = duringStatePut;
+      duringStatePut = null;
+      await edit();
+    }
     const bytes = new Uint8Array(await new Response(init!.body as BodyInit).arrayBuffer());
     const etag = `"e${++etagSeq}"`;
     server.set(key, { bytes, etag });
@@ -187,6 +194,42 @@ describe("sync between devices", () => {
     expect(await db.kits.get(k1.id)).toBeUndefined();
     for (const t of KIT_TABLES) expect(await db.table(t).where("kitId").equals(k1.id).count()).toBe(0);
     expect(await db.kits.get(k2.id)).toBeDefined();
+  });
+
+  it("sends a diagram's image as its own blob and puts it back on the other device", async () => {
+    await freshDevice();
+    const k = kit("Anatomy");
+    await db.kits.add(k);
+    const image = new Uint8Array([255, 216, 255, 1, 2, 3, 250, 251]).buffer;
+    const figureId = newId();
+    await db.figures.add({ id: figureId, kitId: k.id, sourceId: "s", page: 3, title: "Cell envelope", image, width: 10, height: 8, labels: [{ text: "Porin", box: [0.1, 0.1, 0.2, 0.1] }], createdAt: 1 });
+    const code = await enableSync();
+    expect([...server.keys()].some((key) => key.endsWith(`/img-${figureId}`))).toBe(true);
+
+    await freshDevice();
+    await enableSync(code);
+    const figure = await db.figures.get(figureId);
+    expect(figure?.labels[0].text).toBe("Porin");
+    expect(new Uint8Array(figure!.image!)).toEqual(new Uint8Array(image));
+  });
+
+  it("keeps an edit made while the state was uploading pending, and sends it next time", async () => {
+    await freshDevice();
+    const k = kit("Mid-sync");
+    await db.kits.add(k);
+    await enableSync();
+    await db.kits.update(k.id, { title: "Before" });
+    duringStatePut = async () => {
+      await db.kits.update(k.id, { title: "During" });
+    };
+    await syncNow();
+    expect(__test.dirty()).not.toBeNull();
+    await syncNow();
+    expect(__test.dirty()).toBeNull();
+    const code = __test.getState()!.code;
+    await freshDevice();
+    await enableSync(code);
+    expect((await db.kits.get(k.id))?.title).toBe("During");
   });
 
   it("stamps edits made with put() on an existing row", async () => {

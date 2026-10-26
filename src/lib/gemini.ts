@@ -7,6 +7,7 @@ import {
   ThinkingLevel,
 } from "@google/genai";
 import { repairLatex } from "./latex";
+import { repairMolTokens } from "./mol";
 import { breakdown, cacheStorageCost, costOf, findModel, type UsageMetadata } from "./pricing";
 import { getSettings, type Settings } from "./settings";
 
@@ -341,7 +342,7 @@ export function parseJson<T>(text: string): T {
     .replace(/^```(?:json)?\s*/i, "")
     .replace(/\s*```$/, "");
   try {
-    return JSON.parse(trimmed, (_key, value: unknown) => (typeof value === "string" ? repairLatex(value) : value)) as T;
+    return JSON.parse(trimmed, (_key, value: unknown) => (typeof value === "string" ? repairMolTokens(repairLatex(value)) : value)) as T;
   } catch {
     throw new GeminiError("Gemini returned malformed JSON. Try again.", "bad-json");
   }

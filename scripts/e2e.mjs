@@ -9,16 +9,147 @@ const SHOTS = "scratch/shots";
 mkdirSync(SHOTS, { recursive: true });
 
 const concepts = ["Glycolysis", "Krebs cycle", "Electron transport chain", "ATP synthase", "Fermentation", "Mitochondria"];
+const chemConcepts = ["Alkene addition", "Carbocation stability", "Elimination", "Microbial growth"];
+/** Which material the mocked Gemini answers for: "bio" (the default walkthrough) or "chem" (organic chemistry). */
+let scenario = "bio";
+
+// Organic chemistry questions, cycled. Two are broken on purpose and must never reach the screen:
+// a structure that contradicts its name, and a calculation whose answer disagrees with its arithmetic.
+const CHEM_QUESTIONS = [
+  {
+    type: "mcq",
+    prompt: "What is the major product when {{mol:C=CC|propene}} reacts with $\\ce{HBr}$?",
+    options: ["{{mol:CC(C)Br|2-bromopropane}}", "{{mol:CCCBr|1-bromopropane}}", "{{mol:CC(C)O|propan-2-ol}}", "{{mol:CCC|propane}}"],
+    answerIndex: 0,
+    answer: "2-bromopropane",
+    explanation: "Markovnikov addition: protonation gives the more stable secondary carbocation {{mol:C[CH+]C}}, which bromide traps.",
+    hint: "Which carbocation is more stable?",
+  },
+  { type: "numeric", prompt: "A culture grows from $5 \\times 10^{6}$ to $3.2 \\times 10^{8}$ cells/mL. How many generations?", expression: "log2(3.2e8/5e6)", unit: "generations", options: [], answerIndex: -1, answer: "n = log2(64) = 6 generations.", explanation: "Each generation doubles the count.", hint: "How many doublings make 64?" },
+  { type: "mcq", prompt: "DROPPED: which is (R)-2-bromobutane?", options: ["{{mol:CCCCBr|(R)-2-bromobutane}}", "{{mol:CC}}", "{{mol:CCO}}", "{{mol:CCN}}"], answerIndex: 0, answer: "", explanation: "", hint: "" },
+  { type: "tf", prompt: "In $\\ce{CH3CH2OH ->[H2SO4][\\Delta] CH2=CH2 + H2O}$, water is eliminated.", options: ["True", "False"], answerIndex: 0, answer: "True", explanation: "Acid-catalysed dehydration.", hint: "What leaves?" },
+  { type: "numeric", prompt: "DROPPED: generation time for 3 generations in 60 min?", expression: "60/3", unit: "min", options: [], answerIndex: -1, answer: "That is 30 min.", explanation: "", hint: "" },
+];
+
+const REACTIONS = [
+  { name: "Hydrobromination of an alkene", concept: "alkene addition", substrate: "{{mol:C=CC|propene}}", reagents: "$\\ce{HBr}$", product: "{{mol:CC(C)Br|2-bromopropane}}", regiochemistry: "Markovnikov", stereochemistry: "", mechanism: "carbocation intermediate, rearrangements possible", notes: "With peroxides it flips to anti-Markovnikov." },
+  { name: "Acid-catalysed hydration", concept: "alkene addition", substrate: "{{mol:CC(C)=C|2-methylpropene}}", reagents: "$\\ce{H2O}$, $\\ce{H2SO4}$", product: "{{mol:CC(C)(C)O|tert-butanol}}", regiochemistry: "Markovnikov", stereochemistry: "", mechanism: "carbocation intermediate", notes: "Water attacks the tertiary carbocation." },
+  { name: "E2 elimination", concept: "elimination", substrate: "{{mol:CC(C)(C)Br|2-bromo-2-methylpropane}}", reagents: "$\\ce{NaOEt}$, heat", product: "{{mol:CC(C)=C|2-methylpropene}}", regiochemistry: "Zaitsev", stereochemistry: "anti-periplanar", mechanism: "concerted", notes: "A bulky base gives the Hofmann product instead." },
+];
+
+/** What PubChem and OPSIN know, for the mocked lookups. */
+const KNOWN = {
+  propene: "C=CC",
+  "2-bromopropane": "CC(C)Br",
+  "1-bromopropane": "CCCBr",
+  "propan-2-ol": "CC(C)O",
+  propane: "CCC",
+  "(r)-2-bromobutane": "CC[C@@H](C)Br",
+  "2-methylpropene": "CC(C)=C",
+  "tert-butanol": "CC(C)(C)O",
+  "2-bromo-2-methylpropane": "CC(C)(C)Br",
+};
+
+async function handleChemLookup(route) {
+  const req = route.request();
+  const url = req.url();
+  const name = url.includes("pubchem")
+    ? decodeURIComponent((req.postData() ?? "").replace(/^name=/, ""))
+    : decodeURIComponent(url.split("/ws/")[1]?.replace(/\.json$/, "") ?? "");
+  const smiles = KNOWN[name.toLowerCase()];
+  const cors = { "Access-Control-Allow-Origin": "*" };
+  if (!smiles) return route.fulfill({ status: 404, headers: cors, json: {} });
+  return route.fulfill({ headers: cors, json: url.includes("pubchem") ? { PropertyTable: { Properties: [{ SMILES: smiles }] } } : { status: "SUCCESS", smiles } });
+}
+
+// The lecture PDF for the slides run: page 1 is text, page 2 a labelled cell diagram.
+const DIAGRAM_LABELS = [
+  { text: "Cell wall", x: 560, y: 470 },
+  { text: "Membrane", x: 560, y: 380 },
+  { text: "Ribosome", x: 560, y: 290 },
+  { text: "Nucleoid", x: 560, y: 200 },
+];
+const PAGE_W = 792;
+const PAGE_H = 612;
+
+function makePdf() {
+  const esc = (t) => t.replace(/[()\\]/g, (c) => `\\${c}`);
+  const text = (x, y, size, t) => `BT /F1 ${size} Tf ${x} ${y} Td (${esc(t)}) Tj ET`;
+  const page1 = [
+    text(60, 520, 28, "Glycolysis and ATP"),
+    text(60, 470, 16, "Glycolysis stores and transfers energy for the cell."),
+    text(60, 440, 16, "ATP is the energy currency of the cell."),
+  ].join("\n");
+  const page2 = [
+    text(60, 560, 24, "Prokaryotic cell structure"),
+    "2 w 0.3 0.4 0.7 RG 120 150 300 360 re S",
+    "1 w 0.2 0.2 0.2 RG 200 260 150 140 re S",
+    ...DIAGRAM_LABELS.flatMap((l, i) => [`0.5 w 0 0 0 RG ${[420, 350, 330, 300][i]} ${l.y + 5} m ${l.x - 10} ${l.y + 5} l S`, text(l.x, l.y, 18, l.text)]),
+  ].join("\n");
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_W} ${PAGE_H}] /Resources << /Font << /F1 7 0 R >> >> /Contents 5 0 R >>`,
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_W} ${PAGE_H}] /Resources << /Font << /F1 7 0 R >> >> /Contents 6 0 R >>`,
+    `<< /Length ${page1.length} >>\nstream\n${page1}\nendstream`,
+    `<< /Length ${page2.length} >>\nstream\n${page2}\nendstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ];
+  let out = "%PDF-1.4\n";
+  const offsets = [];
+  objects.forEach((o, i) => {
+    offsets.push(out.length);
+    out += `${i + 1} 0 obj\n${o}\nendobj\n`;
+  });
+  const xref = out.length;
+  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("")}`;
+  out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(out, "latin1");
+}
+
+/** Gemini's view of the PDF: page markers, and a figure description on the diagram page. */
+const PDF_TRANSCRIPT = `<!-- page 1 -->\n# Glycolysis and ATP\nGlycolysis stores and transfers energy for the cell. ATP is the energy currency of the cell.\n\n<!-- page 2 -->\n# Prokaryotic cell structure\n> Figure: a prokaryotic cell with labels Cell wall, Membrane, Ribosome, Nucleoid.`;
+
+/** Boxes on the 0-1000 scale for the diagram labels, as Gemini would return them. */
+const diagramResult = () => {
+  const box = (x, y, w, h) => [Math.round(((PAGE_H - y - h) / PAGE_H) * 1000), Math.round((x / PAGE_W) * 1000), Math.round(((PAGE_H - y) / PAGE_H) * 1000), Math.round(((x + w) / PAGE_W) * 1000)];
+  return {
+    diagrams: [
+      {
+        title: "Prokaryotic cell",
+        box: box(110, 140, 600, 380),
+        labels: DIAGRAM_LABELS.map((l) => ({ text: l.text, box: box(l.x - 2, l.y - 5, l.text.length * 9.5 + 4, 24) })),
+      },
+    ],
+  };
+};
 const usage = (i, o) => ({ promptTokenCount: i, candidatesTokenCount: o, thoughtsTokenCount: 50, totalTokenCount: i + o + 50 });
 
 function mockJson(schemaKeys, body) {
+  if (schemaKeys.includes("concepts") && scenario === "chem")
+    return {
+      title: "Alkene Reactions",
+      description: "Additions to alkenes and eliminations that make them.",
+      emoji: "🧪",
+      concepts: chemConcepts.map((name) => ({ name, summary: `Understand ${name}.` })),
+      subject: "organic-chemistry",
+      quantitative: true,
+    };
   if (schemaKeys.includes("concepts"))
     return {
       title: "Cellular Respiration",
       description: "How cells turn glucose into ATP.",
       emoji: "🔋",
       concepts: concepts.map((name) => ({ name, summary: `Understand ${name}.` })),
+      subject: "biology",
+      quantitative: false,
     };
+  if (schemaKeys.includes("diagrams")) return diagramResult();
+  if (schemaKeys.includes("reactions")) return { reactions: REACTIONS };
+  if (schemaKeys.includes("questions") && scenario === "chem") {
+    const n = Number(/write (\d+)/.exec(JSON.stringify(body))?.[1] ?? 8);
+    return { questions: Array.from({ length: n }, (_, i) => ({ ...CHEM_QUESTIONS[i % CHEM_QUESTIONS.length], concept: chemConcepts[i % chemConcepts.length], difficulty: 1 + (i % 3) })) };
+  }
   if (schemaKeys.includes("cards"))
     return {
       cards: concepts.flatMap((c, i) => [
@@ -88,6 +219,8 @@ async function handle(route) {
     u = { promptTokenCount: 400, candidatesTokenCount: 75, candidatesTokensDetails: [{ modality: "AUDIO", tokenCount: 75 }], totalTokenCount: 475 };
   } else if (keys.length) {
     parts = [{ text: JSON.stringify(mockJson(keys, body)) }];
+  } else if (JSON.stringify(body).includes("Convert this document to clean")) {
+    parts = [{ text: PDF_TRANSCRIPT }];
   } else {
     parts = [{ text: "# Study guide\n\n## Glycolysis\nSplits **glucose**. $C_6H_{12}O_6$\n\n| Term | Definition |\n| --- | --- |\n| ATP | energy |\n" }];
   }
@@ -309,8 +442,8 @@ async function run(name, viewport, colorScheme) {
   await ctx.close();
 }
 
-async function device(name, viewport) {
-  const ctx = await browser.newContext({ viewport, serviceWorkers: "block" });
+async function device(name, viewport, colorScheme) {
+  const ctx = await browser.newContext({ viewport, colorScheme, serviceWorkers: "block" });
   const page = await ctx.newPage();
   if (engine === webkit) await page.addInitScript(iosGaps);
   current = { page, name };
@@ -432,14 +565,181 @@ async function runRetry() {
   await ctx.close();
 }
 
+/** Picks options in order until the question is done (a second miss ends it), however the options were shuffled. */
+async function answerAny(page) {
+  for (let i = 1; i <= 4; i++) {
+    if (await page.getByRole("button", { name: /Next question|Keep going/ }).count()) return;
+    const option = page.getByRole("button", { name: new RegExp(`^${i}`) }).first();
+    if (await option.isEnabled()) await option.click();
+    await page.waitForTimeout(100);
+  }
+}
+
+/** Organic chemistry: drawn structures, checked names, calculations, reporting, difficulty, the reaction sheet. */
+async function runChem(name, viewport, colorScheme) {
+  scenario = "chem";
+  const { ctx, page } = await device(name, viewport, colorScheme);
+  await page.route(/pubchem\.ncbi\.nlm\.nih\.gov|ebi\.ac\.uk\/opsin/, handleChemLookup);
+  const shot = (n) => page.screenshot({ path: `${SHOTS}/${name}-${n}.png`, fullPage: true });
+  await page.goto(`${BASE}#/settings`);
+  await page.getByPlaceholder("AIza…").fill("AIzaCHEM-TEST-KEY");
+  if (colorScheme === "dark") await page.getByRole("button", { name: "Dark", exact: true }).click();
+  await page.goto(`${BASE}#/new`);
+  await page.getByRole("button", { name: "Paste notes" }).click();
+  await page.getByPlaceholder(/Paste lecture notes/).fill("Alkenes add HBr with Markovnikov selectivity through the more stable carbocation.\n".repeat(30));
+  await page.getByRole("button", { name: "Add notes" }).click();
+  await page.getByRole("button", { name: "Build study kit" }).click();
+  await page.getByRole("heading", { name: "Alkene Reactions" }).waitFor({ timeout: 20000 });
+  await page.getByText("Reaction sheet").first().waitFor();
+  if ((await page.locator("select").filter({ hasText: "Organic chemistry" }).inputValue()) !== "organic-chemistry") throw new Error("Subject wasn't set from the analysis");
+  await page.waitForTimeout(500);
+  await shot("01-kit");
+  const kitUrl = page.url();
+
+  // Smart Study: go through questions until a drawn-structure question and a calculation have both come up.
+  await page.goto(`${kitUrl}/smart`);
+  let sawStructures = false;
+  let sawNumeric = false;
+  let reported = false;
+  for (let i = 0; i < 12 && !(sawStructures && sawNumeric && reported); i++) {
+    await page.getByRole("button", { name: "Report this question" }).waitFor({ timeout: 15000 });
+    if (await page.getByText("DROPPED").count()) throw new Error("A question with a broken structure or calculation was shown");
+    const numeric = page.getByPlaceholder("Your answer, e.g. 3.2e8");
+    if (await numeric.count()) {
+      await numeric.fill("5");
+      await page.getByRole("button", { name: "Check answer" }).click();
+      await page.getByText("Not quite: 5 isn't it.").waitFor();
+      await numeric.fill("6");
+      await page.getByRole("button", { name: "Try again" }).click();
+      await page.getByText("Nice, that's right.").waitFor();
+      await shot("03-numeric");
+      sawNumeric = true;
+    } else if ((await page.getByRole("img", { name: "Chemical structure" }).count()) >= 5) {
+      await shot("02-structures");
+      await answerAny(page);
+      await page.getByText("Markovnikov addition").waitFor();
+      await shot("02b-structures-answered");
+      sawStructures = true;
+    } else if (!reported) {
+      await page.getByRole("button", { name: "Report this question" }).click();
+      await page.getByRole("button", { name: "The marked answer is wrong" }).click();
+      reported = true;
+      await page.getByRole("dialog").waitFor({ state: "detached" }).catch(() => {});
+      await page.waitForTimeout(500);
+      continue;
+    } else {
+      await answerAny(page);
+    }
+    await page.getByRole("button", { name: /Next question|Keep going/ }).click();
+    await page.getByRole("button", { name: /Next question|Keep going/ }).waitFor({ state: "detached" });
+  }
+  if (!sawStructures || !sawNumeric || !reported) throw new Error(`Smart Study run incomplete: structures ${sawStructures}, numeric ${sawNumeric}, reported ${reported}`);
+
+  // Difficulty lives in the Steer menu.
+  await page.getByRole("button", { name: "Steer" }).click();
+  await page.getByRole("button", { name: "Gentle", exact: true }).click();
+  await page.getByText("About 9 in 10 right").waitFor();
+  await page.waitForTimeout(400);
+  await shot("04-difficulty");
+  await page.keyboard.press("Escape");
+
+  // Reaction sheet: drawn, then turned into cards.
+  await page.goto(`${kitUrl}/reactions`);
+  await page.getByRole("button", { name: /Make the sheet/ }).click();
+  await page.getByText("Hydrobromination of an alkene").waitFor({ timeout: 15000 });
+  await page.getByRole("img", { name: "2-bromopropane" }).first().waitFor();
+  await page.waitForTimeout(300);
+  await shot("05-reactions");
+  await page.getByRole("img", { name: "2-bromopropane" }).first().click();
+  await page.getByText("Formula").waitFor();
+  await page.getByText("C₃H₇Br").waitFor();
+  await page.waitForTimeout(400);
+  await shot("06-zoom");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Make flashcards" }).click();
+  await page.getByText(/Added 6 cards/).waitFor();
+  await page.goto(`${kitUrl}/cards`);
+  await page.getByRole("button", { name: "All cards" }).click();
+  await page.getByText("Which reagents?").first().waitFor();
+  await page.waitForTimeout(300);
+  await shot("07-reaction-cards");
+  await ctx.close();
+  scenario = "bio";
+}
+
+/** A lecture PDF: its slides are kept, shown after a miss, and its labelled diagram becomes cards. */
+async function runSlides(name, viewport, colorScheme) {
+  const { ctx, page } = await device(name, viewport, colorScheme);
+  const shot = (n) => page.screenshot({ path: `${SHOTS}/${name}-${n}.png`, fullPage: true });
+  await page.goto(`${BASE}#/settings`);
+  await page.getByPlaceholder("AIza…").fill("AIzaSLIDES-TEST-KEY");
+  if (colorScheme === "dark") await page.getByRole("button", { name: "Dark", exact: true }).click();
+  await page.goto(`${BASE}#/new`);
+  await page.locator('input[type="file"]').setInputFiles({ name: "Lecture 3.pdf", mimeType: "application/pdf", buffer: makePdf() });
+  await page.getByRole("button", { name: "Build study kit" }).click();
+  await page.getByRole("heading", { name: "Cellular Respiration" }).waitFor({ timeout: 20000 });
+  const kitUrl = page.url();
+  // The slides are kept after the kit is ready; the diagram button appears once they're in.
+  await page.goto(`${kitUrl}/cards`);
+  await page.getByRole("button", { name: "Diagram cards" }).waitFor({ timeout: 30000 });
+
+  // A miss shows the slide the question came from.
+  await page.goto(`${kitUrl}/smart`);
+  await page.getByText(/^Question \d+/).waitFor({ timeout: 15000 });
+  for (let i = 0; i < 6 && !(await page.getByRole("button", { name: /Stores DNA/ }).count()); i++) {
+    await page.getByRole("button", { name: /True|Stores energy/ }).first().click();
+    await page.getByRole("button", { name: "Next question" }).click();
+    await page.getByText(/^Question \d+/).waitFor();
+  }
+  await page.getByRole("button", { name: /Stores DNA/ }).click();
+  await page.getByRole("button", { name: /Makes light/ }).click();
+  await page.getByText(/From Lecture 3, page 1/).waitFor({ timeout: 10000 });
+  await page.waitForTimeout(400);
+  await shot("01-slide-after-miss");
+
+  // Diagram cards from the labelled diagram on page 2.
+  await page.goto(`${kitUrl}/cards`);
+  await page.getByRole("button", { name: "Diagram cards" }).click();
+  await page.getByRole("button", { name: "Find diagrams" }).click();
+  await page.getByText(/Made 4 cards from 1 diagram/).waitFor({ timeout: 20000 });
+  await page.getByRole("button", { name: "All cards" }).click();
+  await page.getByText("Diagram card · Prokaryotic cell").first().waitFor();
+  await shot("02-diagram-cards");
+  await page.getByRole("button", { name: /^Review/ }).click();
+  // Space flips, 4 is Easy: clear the text cards until a diagram card comes up.
+  for (let i = 0; i < 40 && !(await page.getByText("name the highlighted part").count()); i++) {
+    await page.keyboard.press("Space");
+    await page.waitForTimeout(120);
+    await page.keyboard.press("4");
+    await page.waitForTimeout(120);
+  }
+  await page.getByText("name the highlighted part").waitFor();
+  await page.waitForTimeout(300);
+  await shot("03-diagram-front");
+  await page.getByText("name the highlighted part").click();
+  await page.waitForTimeout(300);
+  await shot("04-diagram-back");
+  await ctx.close();
+}
+
 try {
-  if (process.env.E2E_ONLY === "retry") await runRetry();
+  if (process.env.E2E_ONLY === "chem") {
+    await runChem("chem-mobile", { width: 390, height: 844 }, "light");
+    await runChem("chem-desktop-dark", { width: 1280, height: 860 }, "dark");
+  } else if (process.env.E2E_ONLY === "slides") {
+    await runSlides("slides-mobile", { width: 390, height: 844 }, "light");
+    await runSlides("slides-desktop-dark", { width: 1280, height: 860 }, "dark");
+  } else if (process.env.E2E_ONLY === "retry") await runRetry();
   else if (process.env.E2E_ONLY !== "sync") {
     await run("mobile", { width: 390, height: 844 }, "light");
     await run("desktop-dark", { width: 1280, height: 860 }, "dark");
     await runRetry();
+    await runChem("chem-mobile", { width: 390, height: 844 }, "light");
+    await runChem("chem-desktop-dark", { width: 1280, height: 860 }, "dark");
+    await runSlides("slides-mobile", { width: 390, height: 844 }, "light");
+    await runSlides("slides-desktop-dark", { width: 1280, height: 860 }, "dark");
   }
-  if (process.env.E2E_ONLY !== "retry") await runSync();
+  if (!["retry", "chem", "slides"].includes(process.env.E2E_ONLY)) await runSync();
 } catch (err) {
   console.error("E2E FAILED:", err.message);
   await current?.page.screenshot({ path: `${SHOTS}/${current.name}-FAILED.png`, fullPage: true }).catch(() => {});

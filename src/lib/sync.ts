@@ -3,7 +3,8 @@
 //   - every local write stamps the row with `_ts` (hooks below); on merge the newer `_ts` wins
 //   - deletes leave tombstones, which travel with the snapshot and delete the row elsewhere
 //   - uploads are compare-and-swap on the server's ETag; on conflict we re-pull, merge, retry
-// Source texts (the big part) go up once each as separate blobs; podcast audio stays per device.
+// Source texts (the big part) and diagram images go up once each as separate blobs; podcast audio
+// and slide images stay per device.
 import { useSyncExternalStore } from "react";
 import type { Transaction } from "dexie";
 import { deriveKeys, formatCode, newSyncCode, normalizeCode, open, seal, type VaultKeys } from "./crypto";
@@ -27,6 +28,8 @@ interface SyncState {
   lastSync: number | null;
   /** Source ids whose text this device has uploaded. */
   uploaded: string[];
+  /** Figure ids whose image this device has uploaded. */
+  uploadedImages?: string[];
 }
 
 export interface SyncStatus {
@@ -139,8 +142,14 @@ function flushTombs() {
   if (batch.length) db.tombstones.bulkPut(batch).catch(() => {});
 }
 
+let dirtySeq = 0;
+
+/**
+ * Every edit gets a fresh stamp, so an edit made while an upload is in flight changes it and the
+ * sync loop keeps it pending instead of clearing it unsent.
+ */
 function markDirty() {
-  if (!dirtyStamp()) kv.set(DIRTY_KEY, String(Date.now()));
+  kv.set(DIRTY_KEY, `${Date.now()}-${++dirtySeq}`);
   schedulePush();
 }
 
@@ -196,6 +205,11 @@ export async function buildSnapshot(): Promise<Snapshot> {
         const { audio, ...rest } = r;
         return { ...rest, audioOnDevice: !!audio };
       }
+      if (name === "figures") {
+        const { image, ...rest } = r;
+        // A device still waiting for the image passes on that another one has it.
+        return { ...rest, hasImage: !!image || !!rest.hasImage };
+      }
       return r;
     });
   }
@@ -215,6 +229,7 @@ function keepLocal(name: SyncTable, incoming: Row, local: Row | undefined): Row 
     row.audio = local?.audio;
     delete row.audioOnDevice;
   }
+  if (name === "figures") row.image = local?.image;
   return row;
 }
 
@@ -328,6 +343,47 @@ async function downloadTexts(keys: VaultKeys) {
   }
 }
 
+// Diagram images are bytes; sealed blobs hold JSON, so they travel as base64.
+function toBase64(bytes: ArrayBuffer): string {
+  const view = new Uint8Array(bytes);
+  let bin = "";
+  for (let i = 0; i < view.length; i += 0x8000) bin += String.fromCharCode(...view.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+function fromBase64(b64: string): ArrayBuffer {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out.buffer;
+}
+
+async function uploadImages(keys: VaultKeys, st: SyncState) {
+  st.uploadedImages ??= [];
+  const done = new Set(st.uploadedImages);
+  const figures = await db.figures.filter((f) => !!f.image && !done.has(f.id)).toArray();
+  for (const f of figures) {
+    const res = await api("PUT", keys, `img-${f.id}`, { body: await seal({ jpeg: toBase64(f.image!) }, keys.key) });
+    if (!res.ok) throw new Error(`Couldn't upload a diagram (${res.status}).`);
+    st.uploadedImages.push(f.id);
+    saveState(st);
+  }
+}
+
+async function downloadImages(keys: VaultKeys) {
+  const missing = await db.figures.filter((f) => !f.image && !!(f as unknown as Row).hasImage).toArray();
+  for (const f of missing) {
+    const res = await api("GET", keys, `img-${f.id}`);
+    if (res.status === 204 || res.status === 404) continue; // its device hasn't uploaded it yet
+    if (!res.ok) throw new Error(`Couldn't download a diagram (${res.status}).`);
+    const { jpeg } = await open<{ jpeg: string }>(new Uint8Array(await res.arrayBuffer()), keys.key);
+    await db.transaction("rw", db.figures, async (tx) => {
+      (tx as unknown as Record<symbol, boolean>)[REMOTE] = true;
+      await db.figures.update(f.id, { image: fromBase64(jpeg) });
+    });
+  }
+}
+
 // ---------- The sync loop ----------
 
 let running: Promise<void> | null = null;
@@ -349,15 +405,21 @@ export function syncNow(): Promise<void> {
         const pulled = await pull(keys, st);
         saveState(st);
         await downloadTexts(keys);
+        await downloadImages(keys);
         const dirtyAt = dirtyStamp();
         if (!dirtyAt && pulled !== "missing") break;
         await uploadTexts(keys, st);
+        await uploadImages(keys, st);
         const body = await seal(await buildSnapshot(), keys.key);
         const res = await api("PUT", keys, "state", { body, etag: st.etag });
         if (res.status === 412) continue; // another device saved first: pull, merge, try again
         if (!res.ok) throw new Error(res.status === 413 ? "Too much data to sync in one piece." : `Sync upload failed (${res.status}).`);
         st.etag = ((await res.json()) as { etag: string }).etag;
-        if (dirtyStamp() === dirtyAt) clearDirty(); // edits made during the upload stay pending
+        // Edits made during the upload stay pending, and so does a diagram added after its images went up.
+        const done = new Set(st.uploadedImages ?? []);
+        const imagesLeft = await db.figures.filter((f) => !!f.image && !done.has(f.id)).count();
+        if (dirtyStamp() === dirtyAt && !imagesLeft) clearDirty();
+        else rerun = true;
         break;
       }
       st.lastSync = Date.now();

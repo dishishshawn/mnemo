@@ -1,24 +1,56 @@
 import clsx from "clsx";
-import { ChartColumn, Check, ChevronLeft, Eye, Lightbulb, Sparkles, Target, X } from "lucide-react";
+import { ChartColumn, Check, ChevronLeft, Eye, Flag, Lightbulb, Sparkles, Target, X } from "lucide-react";
 import { Link } from "react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { InlineMarkdown, Markdown } from "../components/Markdown";
 import { useStudyPlan } from "../components/ExamPlan";
 import { PenguinSays, type Mood } from "../components/Penguin";
-import { Badge, Button, Card, ErrorBox, inputClass, Modal, PageHeader, Progress, Spinner, MissingKit } from "../components/ui";
-import { useSettings } from "../lib/settings";
-import { db, newId, type Concept, type Question } from "../lib/db";
+import { SlideRef } from "../components/SlideRef";
+import { Badge, Button, Card, ErrorBox, inputClass, Modal, PageHeader, Progress, Segmented, Spinner, MissingKit } from "../components/ui";
+import { formatNumber, matches, parseAnswer } from "../lib/calc";
+import { getSettings, updateSettings, useSettings } from "../lib/settings";
+import { db, newId, type Attempt, type Concept, type Question } from "../lib/db";
 import { useConcepts, useKit } from "../lib/hooks";
-import { applyAnswer, BATCH_SIZE, levelOf, needsMore, pickQuestion, pickTargets } from "../lib/smart";
+import { onlyMols } from "../lib/mol";
+import {
+  applyAnswer,
+  atLevel,
+  BATCH_SIZE,
+  CHALLENGES,
+  levelOf,
+  needsMore,
+  pickQuestion,
+  pickTargets,
+  RECENT_ANSWERS,
+  recentShift,
+  TARGET_LOW_WATER,
+  targetDifficulty,
+  type Challenge,
+} from "../lib/smart";
 import { generateSmartQuestions, gradeShortAnswers } from "../lib/study";
 
 const ROUND = 10;
 type Phase = "answering" | "retry" | "done";
 export type Mode = "choice" | "short";
 
-/** Smart Study asks multiple choice and true/false; the Short answers section asks the written ones. */
-const TYPES: Record<Mode, Question["type"][]> = { choice: ["mcq", "tf"], short: ["short"] };
+/**
+ * Smart Study asks multiple choice and true/false, plus calculations in kits that teach them; the
+ * Short answers section asks the written ones.
+ */
+const typesFor = (mode: Mode, quantitative?: boolean): Question["type"][] =>
+  mode === "short" ? ["short"] : quantitative ? ["mcq", "tf", "numeric"] : ["mcq", "tf"];
 const TITLES: Record<Mode, string> = { choice: "Smart Study", short: "Short answers" };
+
+/** Why a question was reported, as stored on it and shown to Gemini so the next batch avoids it. */
+const REPORT_REASONS = ["The marked answer is wrong", "More than one answer is right", "It's not in my material", "It's confusing or broken"];
+
+/** What the last answer changed, so a report can take it back. */
+interface Undo {
+  questionId: string;
+  attemptId: string;
+  concept?: Concept;
+  counted: number;
+}
 
 const pick = <T,>(xs: T[], seed: string) => xs[Math.abs([...seed].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) | 0, 7)) % xs.length];
 const LINES = {
@@ -41,12 +73,13 @@ interface Outcome {
 
 export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
   const { kitId, kit } = useKit();
-  const types = TYPES[mode];
+  const types = useMemo(() => typesFor(mode, kit?.quantitative), [mode, kit?.quantitative]);
   const concepts = useConcepts(kitId);
   const plan = useStudyPlan(kitId, kit?.examDate);
   // "classic" is the pre-2026-10-14 scrolling layout, kept behind a setting while the one-screen
   // layout is being tried out.
-  const classic = useSettings().studyLayout === "classic";
+  const { studyLayout, challenge } = useSettings();
+  const classic = studyLayout === "classic";
   const [steer, setSteer] = useState("");
   const [focus, setFocus] = useState<string[]>([]);
   const [question, setQuestion] = useState<Question | null>(null);
@@ -60,10 +93,19 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
   const [round, setRound] = useState({ answered: 0, score: 0 });
   const [showSetup, setShowSetup] = useState(false);
   const [showMastery, setShowMastery] = useState(false);
+  const [reporting, setReporting] = useState(false);
   const recent = useRef<string[]>([]);
+  /** The question on screen, for async results (grading) to check they still belong to it. */
+  const showing = useRef<string | null>(null);
+  showing.current = question?.id ?? null;
+  /** Difficulty shift from the setting and the last few answers, worked out before each pick. */
+  const shift = useRef(0);
+  const undo = useRef<Undo | null>(null);
   /** The in-flight top-up, so an empty pool waits for it instead of starting a second one. */
   const prefetching = useRef<Promise<void> | null>(null);
   const started = useRef(false);
+  /** Whether this session has checked the pool has questions at the current levels. */
+  const levelsChecked = useRef(false);
   const advancing = useRef(false);
   const askedIds = useRef(new Set<string>());
   const saving = useRef<Promise<unknown>>(Promise.resolve());
@@ -76,12 +118,19 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
 
   const targetsFor = useCallback((all: Concept[]) => pickTargets(all, 4, new Date(), focus), [focus]);
 
+  /** The setting's shift plus how the last few answers in this kit went against its target. */
+  // Read at call time: `next` is memoised and would otherwise keep the setting it first saw.
+  const refreshShift = async (level: Challenge = getSettings().challenge) => {
+    const answers = await db.attempts.where("kitId").equals(kitId).filter((a: Attempt) => a.mode === "smart").sortBy("at");
+    shift.current = CHALLENGES[level].shift + recentShift(answers.slice(-RECENT_ANSWERS), level);
+  };
+
   const generate = useCallback(
     async (all: Concept[]) => {
       const targets = targetsFor(all);
       await generateSmartQuestions(
         kitId,
-        targets.map((t) => ({ name: t.name, mastery: t.mastery, attempts: t.attempts })),
+        targets.map((t) => ({ name: t.name, mastery: t.mastery, attempts: t.attempts, difficulty: targetDifficulty(t, shift.current) })),
         { count: BATCH_SIZE, steer: steer.trim() || undefined, types },
       );
     },
@@ -103,7 +152,12 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
 
   /** Starts a background batch when the pool is getting low, unless one is already on its way. */
   const topUp = (all: Concept[], pool: Question[]) => {
-    if (prefetching.current || !needsMore(pool, targetsFor(all))) return;
+    if (prefetching.current) return;
+    const targets = targetsFor(all);
+    // Once a session: a pool written for other levels gets one batch at the current ones.
+    const offLevel = !levelsChecked.current && atLevel(pool, targets, shift.current) < TARGET_LOW_WATER;
+    levelsChecked.current = true;
+    if (!offLevel && !needsMore(pool, targets)) return;
     prefetching.current = generate(all)
       .catch(() => {})
       .finally(() => (prefetching.current = null));
@@ -115,9 +169,11 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
     await saving.current;
     const all = await db.concepts.where("kitId").equals(kitId).sortBy("order");
     if (!all.length) return setError("This kit has no concepts yet.");
+    await refreshShift();
     const targets = targetsFor(all);
+    const pick = (pool: Question[]) => pickQuestion(pool, targets, recent.current, new Date(), shift.current) ?? pickQuestion(pool, all, recent.current, new Date(), shift.current);
     let pool = await loadPool();
-    let q = pickQuestion(pool, targets, recent.current) ?? pickQuestion(pool, all, recent.current);
+    let q = pick(pool);
     if (!q) {
       // Pool ran dry: wait for the batch already in flight, or write one now.
       setQuestion(null);
@@ -132,7 +188,7 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
       }
       setLoading("");
       pool = await loadPool();
-      q = pickQuestion(pool, targets, recent.current) ?? pickQuestion(pool, all, recent.current);
+      q = pick(pool);
       if (!q) return setError("Couldn't create questions for this material. Try again or change the focus.");
     }
     topUp(all, pool);
@@ -157,14 +213,17 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
     setOutcome({ score, feedback: fb });
     recent.current = [...recent.current, q.concept].slice(-5);
     // Needing a hint still counts, just for less (applyAnswer applies the same discount to mastery).
-    setRound((r) => ({ answered: r.answered + 1, score: r.score + (usedHint ? score * 0.6 : score) }));
+    const counted = usedHint ? score * 0.6 : score;
+    setRound((r) => ({ answered: r.answered + 1, score: r.score + counted }));
     askedIds.current.add(q.id);
     const save = (async () => {
     const concept = await db.concepts.where("kitId").equals(kitId).filter((c) => c.name === q.concept).first();
+    const attemptId = newId();
+    undo.current = { questionId: q.id, attemptId, concept, counted };
     await db.transaction("rw", db.concepts, db.questions, db.attempts, db.kits, async () => {
-      if (concept) await db.concepts.put(applyAnswer(concept, score, usedHint));
+      if (concept) await db.concepts.put(applyAnswer(concept, score, usedHint, new Date(), getSettings().challenge));
       await db.questions.update(q.id, { askedAt: Date.now(), asks: (q.asks ?? 0) + 1, lastScore: score });
-      await db.attempts.add({ id: newId(), kitId, questionId: q.id, concept: q.concept, mode: "smart", response, score, usedHint, feedback: fb, at: Date.now() });
+      await db.attempts.add({ id: attemptId, kitId, questionId: q.id, concept: q.concept, mode: "smart", response, score, usedHint, feedback: fb, at: Date.now() });
       await db.kits.update(kitId, { lastStudiedAt: Date.now() });
     });
     })();
@@ -193,6 +252,8 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
       ]);
       const r = results.get("a")!;
       setLoading("");
+      // Reported or skipped while it was being graded: the result belongs to a question that's gone.
+      if (showing.current !== question.id) return;
       if (r.verdict === "correct" || reveal) return finish(question, r.score, reveal, text, r.feedback);
       setFeedback(r.feedback);
       setPhase("retry");
@@ -202,7 +263,55 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
     }
   };
 
+  const submitNumeric = () => {
+    if (!question?.numeric || !text.trim()) return;
+    const value = parseAnswer(text);
+    if (value === null) return setFeedback("That doesn't read as a number. Try something like 3.2e8 or 3.2 x 10^8.");
+    if (matches(value, question.numeric.value)) return finish(question, 1, phase === "retry", text);
+    if (phase === "answering") {
+      setFeedback(`Not quite: ${formatNumber(value)} isn't it.`);
+      return setPhase("retry");
+    }
+    finish(question, 0, true, text, `You had ${formatNumber(value)}.`);
+  };
+
   const giveUp = () => question && finish(question, 0, phase === "retry", "(revealed)");
+
+  /**
+   * Reports the question as wrong: it's never asked again, Gemini hears why, and if it was already
+   * answered the answer stops counting (mastery, schedule and level go back to before it).
+   */
+  const report = async (reason: string) => {
+    if (!question) return;
+    setReporting(false);
+    const answered = phase === "done";
+    await saving.current;
+    const u = answered && undo.current?.questionId === question.id ? undo.current : null;
+    await db.transaction("rw", db.concepts, db.questions, db.attempts, async () => {
+      await db.questions.update(question.id, { flagged: reason });
+      if (u) {
+        if (u.concept) await db.concepts.put(u.concept);
+        await db.attempts.delete(u.attemptId);
+      }
+    });
+    askedIds.current.add(question.id);
+    if (u) {
+      undo.current = null;
+      setRound((r) => ({ answered: Math.max(0, r.answered - 1), score: Math.max(0, r.score - u.counted) }));
+    }
+    next();
+  };
+
+  /** A new difficulty takes effect on the next pick, and a batch at the new level starts right away. */
+  const changeChallenge = async (level: Challenge) => {
+    updateSettings({ challenge: level });
+    await refreshShift(level);
+    const all = await db.concepts.where("kitId").equals(kitId).sortBy("order");
+    if (all.length && !prefetching.current)
+      prefetching.current = generate(all)
+        .catch(() => {})
+        .finally(() => (prefetching.current = null));
+  };
 
   const roundDone = round.answered > 0 && round.answered % ROUND === 0 && phase === "done";
   const keepGoing = () => {
@@ -215,7 +324,7 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).tagName === "TEXTAREA" || (e.target as HTMLElement).tagName === "INPUT") return;
       if (phase === "done" && e.key === "Enter") (roundDone ? keepGoing : next)();
-      if (question && question.type !== "short" && /^[1-4]$/.test(e.key)) choose(Number(e.key) - 1);
+      if (question && (question.type === "mcq" || question.type === "tf") && /^[1-4]$/.test(e.key)) choose(Number(e.key) - 1);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -226,6 +335,118 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
   if (!kit || !concepts) return <Spinner label="Loading" />;
 
   const currentConcept = concepts.find((c) => c.name === question?.concept);
+  const choice = question?.type === "mcq" || question?.type === "tf";
+  // Four drawn structures read better as a grid than as a list.
+  const structureOptions = !!question?.options.length && question.options.every(onlyMols);
+
+  const badges = (compact: boolean) =>
+    question && (
+      <div className={clsx("flex flex-wrap items-center", compact ? "mb-2 gap-1.5" : "mb-3 gap-2")}>
+        <Badge tone="brand">{question.concept}</Badge>
+        {currentConcept && <Badge>{levelOf(currentConcept)}</Badge>}
+        <Badge>{"●".repeat(question.difficulty)}{"○".repeat(3 - question.difficulty)}</Badge>
+        {question.askedAt && <Badge tone="amber">missed before</Badge>}
+        <button
+          onClick={() => setReporting(true)}
+          disabled={!!loading}
+          className="-my-1 ml-auto rounded-full p-1.5 text-muted hover:bg-[var(--surface-2)] hover:text-blush-700 disabled:opacity-40"
+          aria-label="Report this question"
+          title="Something wrong with this question?"
+        >
+          <Flag className="size-3.5" />
+        </button>
+      </div>
+    );
+
+  const optionList = (compact: boolean) =>
+    question && (
+      <div className={structureOptions ? "grid grid-cols-2 gap-2" : "space-y-2"}>
+        {question.options.map((opt, i) => {
+          const isPicked = picked.includes(i);
+          const isAnswer = i === question.answerIndex;
+          const show = phase === "done";
+          return (
+            <button
+              key={i}
+              onClick={() => choose(i)}
+              disabled={phase === "done" || isPicked}
+              className={clsx(
+                "flex w-full rounded-xl border text-left transition",
+                structureOptions ? "flex-col items-center gap-1 p-2" : compact ? "items-start gap-2.5 px-3 py-2" : "items-start gap-3 p-3",
+                show && isAnswer && "border-emerald-400 bg-emerald-50 dark:bg-emerald-950/30",
+                isPicked && !isAnswer && "animate-shake border-blush-500 bg-blush-100 dark:bg-blush-700/25",
+                !(show && isAnswer) && !isPicked && "border-theme hover:border-brand-400 hover:bg-[var(--surface-2)]",
+              )}
+            >
+              <span
+                className={clsx(
+                  "flex shrink-0 items-center justify-center rounded-md surface-2 font-semibold",
+                  structureOptions && "self-start",
+                  compact ? "mt-0.5 size-5 text-[11px]" : "mt-0.5 size-6 text-xs",
+                )}
+              >
+                {show && isAnswer ? <Check className="size-3.5 text-emerald-600" /> : isPicked ? <X className="size-3.5 text-rose-600" /> : i + 1}
+              </span>
+              <InlineMarkdown className={clsx("flex-1", compact ? "text-[13px] leading-snug sm:text-sm" : "text-sm")}>{opt}</InlineMarkdown>
+            </button>
+          );
+        })}
+      </div>
+    );
+
+  const numericInput = question?.numeric && phase !== "done" && (
+    <div className="flex items-center gap-2">
+      <input
+        className={clsx(inputClass, "flex-1 tabular-nums")}
+        placeholder="Your answer, e.g. 3.2e8"
+        value={text}
+        autoComplete="off"
+        onChange={(e) => {
+          setText(e.target.value);
+          if (phase === "answering") setFeedback("");
+        }}
+        onKeyDown={(e) => e.key === "Enter" && submitNumeric()}
+      />
+      {question.numeric.unit && <span className="shrink-0 text-sm text-muted">{question.numeric.unit}</span>}
+    </div>
+  );
+  // Before the first try, the only feedback is that the answer couldn't be read as a number.
+  const numericNote = question?.type === "numeric" && phase === "answering" && feedback && <p className="mt-2 text-sm text-blush-700 dark:text-blush-200">{feedback}</p>;
+
+  const numericAnswer = question?.numeric && question.type === "numeric" && (
+    <div className="rounded-xl surface-2 p-3 text-sm">
+      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">Answer</div>
+      <InlineMarkdown className="font-semibold">{`${formatNumber(question.numeric.value)}${question.numeric.unit ? ` ${question.numeric.unit}` : ""}`}</InlineMarkdown>
+      <InlineMarkdown className="mt-1 text-muted">{question.answer}</InlineMarkdown>
+    </div>
+  );
+
+  const difficultyPicker = (
+    <div>
+      <div className="mb-2 text-sm font-medium">Difficulty</div>
+      <Segmented
+        value={challenge}
+        onChange={(level) => void changeChallenge(level)}
+        options={(Object.keys(CHALLENGES) as Challenge[]).map((value) => ({ value, label: CHALLENGES[value].label }))}
+      />
+      <p className="mt-1.5 text-xs text-muted">
+        {CHALLENGES[challenge].blurb} It also eases off for a while when you miss a few in a row.
+      </p>
+    </div>
+  );
+
+  const reportModal = (
+    <Modal open={reporting} onClose={() => setReporting(false)} title="What's wrong with it?">
+      <div className="space-y-2">
+        {REPORT_REASONS.map((reason) => (
+          <button key={reason} onClick={() => report(reason)} className="w-full rounded-xl border border-theme px-3 py-2.5 text-left text-sm hover:border-brand-400 hover:bg-[var(--surface-2)]">
+            {reason}
+          </button>
+        ))}
+        <p className="pt-1 text-xs text-muted">It won't be asked again{phase === "done" ? " and your answer won't count" : ""}. New questions are written to avoid the same mistake.</p>
+      </div>
+    </Modal>
+  );
 
   if (classic)
     return (
@@ -243,6 +464,7 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
 
       {showSetup && (
         <Card className="mb-4 space-y-3 p-4">
+          {difficultyPicker}
           <div>
             <div className="mb-2 text-sm font-medium">Focus on concepts</div>
             <div className="flex flex-wrap gap-1.5">
@@ -309,40 +531,21 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
 
       {question && (
         <Card className="animate-pop p-5" key={question.id}>
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <Badge tone="brand">{question.concept}</Badge>
-            {currentConcept && <Badge>{levelOf(currentConcept)}</Badge>}
-            <Badge>{"●".repeat(question.difficulty)}{"○".repeat(3 - question.difficulty)}</Badge>
-            {question.askedAt && <Badge tone="amber">missed before</Badge>}
-          </div>
-          <InlineMarkdown className="mb-5 text-lg font-medium leading-relaxed">{question.prompt}</InlineMarkdown>
+          {badges(false)}
+          <InlineMarkdown className="mb-5 text-lg font-medium leading-relaxed" molZoom>{question.prompt}</InlineMarkdown>
 
-          {question.type !== "short" ? (
-            <div className="space-y-2">
-              {question.options.map((opt, i) => {
-                const isPicked = picked.includes(i);
-                const isAnswer = i === question.answerIndex;
-                const show = phase === "done";
-                return (
-                  <button
-                    key={i}
-                    onClick={() => choose(i)}
-                    disabled={phase === "done" || isPicked}
-                    className={clsx(
-                      "flex w-full items-start gap-3 rounded-xl border p-3 text-left transition",
-                      show && isAnswer && "border-emerald-400 bg-emerald-50 dark:bg-emerald-950/30",
-                      isPicked && !isAnswer && "animate-shake border-blush-500 bg-blush-100 dark:bg-blush-700/25",
-                      !(show && isAnswer) && !isPicked && "border-theme hover:border-brand-400 hover:bg-[var(--surface-2)]",
-                    )}
-                  >
-                    <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md surface-2 text-xs font-semibold">
-                      {show && isAnswer ? <Check className="size-4 text-emerald-600" /> : isPicked ? <X className="size-4 text-rose-600" /> : i + 1}
-                    </span>
-                    <InlineMarkdown className="flex-1 text-sm">{opt}</InlineMarkdown>
-                  </button>
-                );
-              })}
-            </div>
+          {choice ? (
+            optionList(false)
+          ) : question.type === "numeric" ? (
+            phase !== "done" && (
+              <div className="space-y-3">
+                {numericInput}
+                {numericNote}
+                <Button onClick={submitNumeric} disabled={!text.trim()}>
+                  {phase === "retry" ? "Try again" : "Check answer"}
+                </Button>
+              </div>
+            )
           ) : (
             phase !== "done" && (
               <div className="space-y-3">
@@ -397,7 +600,9 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
                   <InlineMarkdown>{question.answer}</InlineMarkdown>
                 </div>
               )}
+              {numericAnswer}
               <Markdown className="text-sm">{question.explanation}</Markdown>
+              <SlideRef kitId={kitId} question={question} open={outcome.score < 0.8} />
               {roundDone ? (
                 <>
                   <RoundSummary answered={ROUND} score={round.score} concepts={concepts} />
@@ -419,6 +624,7 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
         <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Concept mastery</div>
         <ConceptStrip concepts={concepts} active={question?.concept} />
       </div>
+      {reportModal}
     </div>
   );
 
@@ -464,40 +670,18 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
 
       {question && (
         <Card className="animate-pop min-h-0 flex-1 overflow-y-auto p-4" key={question.id}>
-          <div className="mb-2 flex flex-wrap items-center gap-1.5">
-            <Badge tone="brand">{question.concept}</Badge>
-            {currentConcept && <Badge>{levelOf(currentConcept)}</Badge>}
-            <Badge>{"●".repeat(question.difficulty)}{"○".repeat(3 - question.difficulty)}</Badge>
-            {question.askedAt && <Badge tone="amber">missed before</Badge>}
-          </div>
-          <InlineMarkdown className="mb-3 text-[15px] font-medium leading-snug sm:text-lg sm:leading-relaxed">{question.prompt}</InlineMarkdown>
+          {badges(true)}
+          <InlineMarkdown className="mb-3 text-[15px] font-medium leading-snug sm:text-lg sm:leading-relaxed" molZoom>
+            {question.prompt}
+          </InlineMarkdown>
 
-          {question.type !== "short" ? (
-            <div className="space-y-2">
-              {question.options.map((opt, i) => {
-                const isPicked = picked.includes(i);
-                const isAnswer = i === question.answerIndex;
-                const show = phase === "done";
-                return (
-                  <button
-                    key={i}
-                    onClick={() => choose(i)}
-                    disabled={phase === "done" || isPicked}
-                    className={clsx(
-                      "flex w-full items-start gap-2.5 rounded-xl border px-3 py-2 text-left transition",
-                      show && isAnswer && "border-emerald-400 bg-emerald-50 dark:bg-emerald-950/30",
-                      isPicked && !isAnswer && "animate-shake border-blush-500 bg-blush-100 dark:bg-blush-700/25",
-                      !(show && isAnswer) && !isPicked && "border-theme hover:border-brand-400 hover:bg-[var(--surface-2)]",
-                    )}
-                  >
-                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-md surface-2 text-[11px] font-semibold">
-                      {show && isAnswer ? <Check className="size-3.5 text-emerald-600" /> : isPicked ? <X className="size-3.5 text-rose-600" /> : i + 1}
-                    </span>
-                    <InlineMarkdown className="flex-1 text-[13px] leading-snug sm:text-sm">{opt}</InlineMarkdown>
-                  </button>
-                );
-              })}
-            </div>
+          {choice ? (
+            optionList(true)
+          ) : question.type === "numeric" ? (
+            <>
+              {numericInput}
+              {numericNote}
+            </>
           ) : (
             phase !== "done" && (
               <textarea
@@ -541,7 +725,9 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
                   <InlineMarkdown>{question.answer}</InlineMarkdown>
                 </div>
               )}
+              {numericAnswer}
               <Markdown className="text-sm leading-snug">{question.explanation}</Markdown>
+              <SlideRef kitId={kitId} question={question} open={outcome.score < 0.8} />
               {roundDone && <RoundSummary answered={ROUND} score={round.score} concepts={concepts} />}
             </div>
           )}
@@ -555,8 +741,8 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
               <button onClick={giveUp} className="flex items-center gap-1.5 rounded-full px-2 py-2 text-sm text-muted hover:text-[var(--text)]">
                 <Eye className="size-4" /> Show me the answer
               </button>
-              {question.type === "short" && (
-                <Button onClick={submitShort} loading={!!loading} disabled={!text.trim()} className="ml-auto flex-1">
+              {(question.type === "short" || question.type === "numeric") && (
+                <Button onClick={question.type === "short" ? submitShort : submitNumeric} loading={!!loading} disabled={!text.trim()} className="ml-auto flex-1">
                   {phase === "retry" ? "Try again" : "Check answer"}
                 </Button>
               )}
@@ -570,7 +756,8 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
       )}
 
       <Modal open={showSetup} onClose={() => setShowSetup(false)} title="Steer the session">
-        <div className="space-y-3">
+        <div className="space-y-4">
+          {difficultyPicker}
           <div>
             <div className="mb-2 text-sm font-medium">Focus on concepts</div>
             <div className="flex flex-wrap gap-1.5">
@@ -609,6 +796,7 @@ export default function SmartStudy({ mode = "choice" }: { mode?: Mode }) {
       <Modal open={showMastery} onClose={() => setShowMastery(false)} title="Concept mastery">
         <ConceptStrip concepts={concepts} active={question?.concept} />
       </Modal>
+      {reportModal}
     </div>
   );
 }

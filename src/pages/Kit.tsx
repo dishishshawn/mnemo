@@ -7,6 +7,7 @@ import {
   FileStack,
   FileText,
   FileUp,
+  FlaskConical,
   Gamepad2,
   Headphones,
   Layers,
@@ -27,6 +28,7 @@ import { db } from "../lib/db";
 import { overallMastery, useConcepts, useKit } from "../lib/hooks";
 import { useJob } from "../lib/jobs";
 import { isDue } from "../lib/srs";
+import { hasReactions, SUBJECTS, type Subject } from "../lib/subject";
 
 export default function KitPage() {
   const { kitId, kit } = useKit();
@@ -49,6 +51,7 @@ export default function KitPage() {
       guide: outputs.some((o) => o.type === "guide"),
       summary: outputs.some((o) => o.type === "summary"),
       podcast: outputs.some((o) => o.type === "podcast"),
+      reactions: outputs.some((o) => o.type === "reactions"),
       lastTest: lastTest?.score,
     };
   }, [kitId]);
@@ -159,7 +162,7 @@ export default function KitPage() {
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <Tile to={`${base}/smart`} icon={<Brain />} title="Smart Study" accent>
-              Adaptive multiple choice that targets your weak spots and gets harder as you improve.
+              Adaptive multiple choice that targets your weak spots, pitched at the difficulty you pick.
             </Tile>
             <Tile to={`${base}/short`} icon={<PenLine />} title="Short answers">
               Written answers, graded with a hint before the answer. Same adaptive engine.
@@ -176,6 +179,11 @@ export default function KitPage() {
             <Tile to={`${base}/summary`} icon={<FileText />} title="Summary" badge={counts?.summary ? <Badge tone="green">Ready</Badge> : undefined}>
               The essentials on one page.
             </Tile>
+            {hasReactions(kit.subject) && (
+              <Tile to={`${base}/reactions`} icon={<FlaskConical />} title="Reaction sheet" badge={counts?.reactions ? <Badge tone="green">Ready</Badge> : undefined}>
+                Every reaction in your material, drawn, with reagents, selectivity and the catch.
+              </Tile>
+            )}
             <Tile to={`${base}/podcast`} icon={<Headphones />} title="Podcast" badge={counts?.podcast ? <Badge tone="green">Ready</Badge> : undefined}>
               Two hosts talk through your material. Listen on the go.
             </Tile>
@@ -206,7 +214,7 @@ export default function KitPage() {
             <Badge>{counts?.sources.length ?? 0}</Badge>
           </Card>
         </Link>
-        <Card className="grid gap-3 p-4 min-[420px]:grid-cols-3">
+        <Card className="grid grid-cols-2 gap-3 p-4">
           <ExamDateField kit={kit} />
           <label className="text-xs text-muted">
             Study in
@@ -222,6 +230,25 @@ export default function KitPage() {
                 </option>
               ))}
             </select>
+          </label>
+          <label className="text-xs text-muted">
+            Subject
+            <select
+              className={inputClass}
+              value={kit.subject ?? ""}
+              onChange={(e) => e.target.value && db.kits.update(kitId, { subject: e.target.value as Subject })}
+            >
+              {!kit.subject && <option value="">Not set yet</option>}
+              {SUBJECTS.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="col-span-2 flex items-center gap-2 text-xs text-muted">
+            <input type="checkbox" className="size-4 accent-brand-500" checked={!!kit.quantitative} onChange={(e) => db.kits.update(kitId, { quantitative: e.target.checked })} />
+            Calculation questions in Smart Study and tests (answers worked out by the app, not by Gemini)
           </label>
         </Card>
       </div>

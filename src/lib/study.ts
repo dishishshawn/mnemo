@@ -2,10 +2,17 @@ import { db, newId, pruneKeptFiles, type Concept, type Flashcard, type Kit, type
 import { type CacheHandle, createMaterialCache, GeminiError, generateJson, generateText, streamText, synthesizeDialogue, type Role } from "./gemini";
 import { chunkMaterial, focusMaterial, hashText, markedMaterial } from "./material";
 import { ingestFile, ingestWebPage, ingestYouTube, stripFence, type PdfMode } from "./ingest";
+import { savePageImages } from "./pages";
 import { kindOf } from "./extract";
 import {
   analyzeSchema,
   analyzeTask,
+  notationFor,
+  questionGuidance,
+  reactionSchema,
+  reactionTask,
+  subjectSchema,
+  subjectTask,
   EXPLAIN_SYSTEM,
   explainSchema,
   explainTask,
@@ -30,9 +37,15 @@ import {
   type FlashcardResult,
   type GradeResult,
   type PodcastScript,
+  type QuestionKind,
   type QuestionResult,
   type QuestionTarget,
+  type ReactionSheet,
 } from "./prompts";
+import { checkCalculation } from "./calc";
+import { checkItems, checkQuestions, checkText } from "./chem";
+import { molsAsText } from "./mol";
+import { isSubject, type Subject } from "./subject";
 import { getSettings } from "./settings";
 import { matchConcept } from "./smart";
 import { newCard } from "./srs";
@@ -157,6 +170,29 @@ export async function addSources(
   await db.sources.bulkAdd(rows.map((r) => r.source));
   await readSources(kitId, rows, onStatus, signal);
   await finishKit(kitId, rows, wasReady, onStatus, signal);
+  try {
+    await firstFlashcards(kitId, onStatus, signal);
+  } finally {
+    await keepPages(kitId, rows, onStatus, signal);
+  }
+}
+
+/**
+ * Keeps the pages of the PDFs and photos that were read, on this device, once the kit is usable:
+ * for showing the slide behind a question, and for diagram cards. Rendering a long PDF on a phone
+ * takes a while, so it goes last.
+ */
+async function keepPages(
+  kitId: string,
+  rows: { item: NewSource; source: Source }[],
+  onStatus?: (sourceName: string, status: string) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  for (const { item, source } of rows) {
+    if (signal?.aborted || item.type !== "file") continue;
+    if ((await db.sources.get(source.id))?.status !== "ready") continue;
+    await savePageImages(kitId, source.id, item.file, source.kind, (status) => onStatus?.(source.name, status));
+  }
 }
 
 /** Files bigger than this aren't kept after a failed read; retrying them means picking them again. */
@@ -213,7 +249,11 @@ export async function retrySources(
   await db.kits.update(kitId, { status: "processing", error: undefined });
   await readSources(kitId, rows, onStatus, signal);
   await finishKit(kitId, rows, wasReady, onStatus, signal);
-  if ((await db.kits.get(kitId))?.status === "ready") await firstFlashcards(kitId, onStatus, signal);
+  try {
+    if ((await db.kits.get(kitId))?.status === "ready") await firstFlashcards(kitId, onStatus, signal);
+  } finally {
+    await keepPages(kitId, rows, onStatus, signal);
+  }
 }
 
 /** A new kit's first flashcards, once it's ready; skipped if it already has some. */
@@ -345,15 +385,44 @@ export async function analyzeKit(kitId: string, signal?: AbortSignal): Promise<v
       title: untitled ? res.title : kit.title,
       description: res.description,
       emoji: res.emoji || kit.emoji,
+      // Set once; after that it's the student's to change (Kit page).
+      ...(kit.subject === undefined && isSubject(res.subject) ? { subject: res.subject, quantitative: !!res.quantitative } : {}),
       updatedAt: Date.now(),
     });
   });
 }
 
+/**
+ * The kit's subject. Kits mapped before subjects existed get one from a cheap call on their title
+ * and concepts (no material), once.
+ */
+export async function ensureSubject(kitId: string, signal?: AbortSignal): Promise<Kit> {
+  const kit = await kitOrThrow(kitId);
+  if (kit.subject) return kit;
+  const concepts = await db.concepts.where("kitId").equals(kitId).sortBy("order");
+  try {
+    const res = await generateJson<{ subject: Subject; quantitative: boolean }>({
+      role: "fast",
+      task: "subject",
+      kitId,
+      signal,
+      contents: subjectTask(kit, concepts),
+      schema: subjectSchema,
+    });
+    if (!isSubject(res.subject)) return kit;
+    await db.kits.update(kitId, { subject: res.subject, quantitative: !!res.quantitative });
+    return { ...kit, subject: res.subject, quantitative: !!res.quantitative };
+  } catch (err) {
+    if (signal?.aborted) throw err;
+    console.warn("Couldn't tell the kit's subject", err);
+    return kit;
+  }
+}
+
 // ---------- Flashcards ----------
 
 export async function generateFlashcards(kitId: string, opts: { count?: number; focus?: string; signal?: AbortSignal } = {}) {
-  const kit = await kitOrThrow(kitId);
+  const kit = await ensureSubject(kitId, opts.signal);
   const ctx = await kitContext(kitId, "smart", SYSTEM, opts.signal);
   const concepts = await db.concepts.where("kitId").equals(kitId).sortBy("order");
   const existing = await db.flashcards.where("kitId").equals(kitId).toArray();
@@ -370,14 +439,20 @@ export async function generateFlashcards(kitId: string, opts: { count?: number; 
         language: kit.language,
         count: opts.count ?? 24,
         concepts: concepts.map((c) => c.name),
-        existingFronts: existing.map((c) => c.front),
+        existingFronts: existing.filter((c) => !c.figure).map((c) => c.front),
         focus: opts.focus,
+        notation: notationFor(kit.subject),
       }),
     ),
     schema: flashcardSchema,
   });
   const seen = new Set(existing.map((c) => norm(c.front)));
-  const cards: Flashcard[] = res.cards
+  const checked = await checkItems(
+    res.cards,
+    (c) => [c.front, c.back],
+    (c, fix) => ({ ...c, front: fix(c.front), back: fix(c.back) }),
+  );
+  const cards: Flashcard[] = checked
     .filter((c) => c.front.trim() && c.back.trim() && !seen.has(norm(c.front)))
     .map((c) => ({
       id: newId(),
@@ -421,9 +496,15 @@ function toQuestions(kitId: string, res: QuestionResult, origin: Question["origi
         if (answerIndex !== 0 && answerIndex !== 1) answerIndex = /^t/i.test(q.answer) ? 0 : 1;
       }
       if (q.type === "mcq" && (options.length < 2 || answerIndex < 0 || answerIndex >= options.length)) return null;
-      if (q.type === "short") {
+      if (q.type === "short" || q.type === "numeric") {
         options = [];
         answerIndex = -1;
+      }
+      // Calculations are worked out here; a question whose own answer disagrees is dropped.
+      const calc = checkCalculation({ ...q, options, answerIndex });
+      if (!calc.ok) {
+        console.info(`Dropped a calculation question (${calc.reason}): ${q.prompt}`);
+        return null;
       }
       return {
         id: newId(),
@@ -437,6 +518,7 @@ function toQuestions(kitId: string, res: QuestionResult, origin: Question["origi
         answer: q.answer,
         explanation: q.explanation,
         hint: q.hint,
+        numeric: calc.numeric,
         origin,
         createdAt: Date.now(),
       };
@@ -444,12 +526,23 @@ function toQuestions(kitId: string, res: QuestionResult, origin: Question["origi
     .filter((q): q is Question => q !== null);
 }
 
+/** Drops questions whose structures don't hold up (chem.ts). */
+async function checkedQuestions(questions: Question[]): Promise<Question[]> {
+  const { kept, dropped } = await checkQuestions(questions);
+  for (const d of dropped) console.info(`Dropped a question (${d.why}): ${d.prompt}`);
+  return kept;
+}
+
+/** The questions the student reported as wrong, so the next batch avoids the same mistakes. */
+const reportedOf = (questions: Question[]) =>
+  questions.filter((q) => q.flagged).sort((a, b) => (a.askedAt ?? 0) - (b.askedAt ?? 0)).map((q) => ({ prompt: q.prompt, reason: q.flagged! }));
+
 export async function generateSmartQuestions(
   kitId: string,
   targets: QuestionTarget[],
-  opts: { count?: number; steer?: string; types?: ("mcq" | "tf" | "short")[]; signal?: AbortSignal } = {},
+  opts: { count?: number; steer?: string; types?: QuestionKind[]; signal?: AbortSignal } = {},
 ): Promise<Question[]> {
-  const kit = await kitOrThrow(kitId);
+  const kit = await ensureSubject(kitId, opts.signal);
   const concepts = await db.concepts.where("kitId").equals(kitId).toArray();
   const previous = await db.questions.where("kitId").equals(kitId).toArray();
   // Big kit: send only the sections that teach the target concepts. Small kit: all of it, cached.
@@ -477,13 +570,15 @@ export async function generateSmartQuestions(
         targets,
         types: opts.types ?? ["mcq", "short", "tf"],
         avoid: previous.map((q) => q.prompt),
+        reported: reportedOf(previous),
         steer: opts.steer,
         purpose: "smart",
+        guidance: questionGuidance(kit.subject),
       }),
     ),
     schema: questionSchema,
   });
-  const questions = toQuestions(kitId, res, "smart", concepts);
+  const questions = await checkedQuestions(toQuestions(kitId, res, "smart", concepts));
   await kitOrThrow(kitId);
   await db.questions.bulkAdd(questions);
   return questions;
@@ -491,9 +586,9 @@ export async function generateSmartQuestions(
 
 export async function generateTestQuestions(
   kitId: string,
-  opts: { count: number; types: ("mcq" | "tf" | "short")[]; focus?: string; signal?: AbortSignal },
+  opts: { count: number; types: QuestionKind[]; focus?: string; signal?: AbortSignal },
 ): Promise<Question[]> {
-  const kit = await kitOrThrow(kitId);
+  const kit = await ensureSubject(kitId, opts.signal);
   const ctx = await kitContext(kitId, "smart", SYSTEM, opts.signal);
   const concepts = await db.concepts.where("kitId").equals(kitId).sortBy("order");
   const previous = await db.questions.where("[kitId+origin]").equals([kitId, "test"]).toArray();
@@ -512,13 +607,15 @@ export async function generateTestQuestions(
         targets: concepts.map((c) => ({ name: c.name, mastery: c.mastery, attempts: c.attempts })),
         types: opts.types,
         avoid: previous.map((q) => q.prompt),
+        reported: reportedOf(await db.questions.where("kitId").equals(kitId).filter((q) => !!q.flagged).toArray()),
         steer: opts.focus,
         purpose: "test",
+        guidance: questionGuidance(kit.subject),
       }),
     ),
     schema: questionSchema,
   });
-  const questions = toQuestions(kitId, res, "test", concepts);
+  const questions = await checkedQuestions(toQuestions(kitId, res, "test", concepts));
   await kitOrThrow(kitId);
   await db.questions.bulkAdd(questions);
   return questions;
@@ -589,7 +686,7 @@ export async function assessExplanation(kitId: string, concept: Concept, explana
 // ---------- Guides, summaries ----------
 
 export async function generateDocument(kitId: string, type: "guide" | "summary", signal?: AbortSignal): Promise<Output> {
-  const kit = await kitOrThrow(kitId);
+  const kit = await ensureSubject(kitId, signal);
   const ctx = await kitContext(kitId, "smart", SYSTEM, signal);
   const concepts = await db.concepts.where("kitId").equals(kitId).sortBy("order");
   const text = await generateText({
@@ -601,7 +698,7 @@ export async function generateDocument(kitId: string, type: "guide" | "summary",
     config: ctx.config,
     cachedMaterial: ctx.cachedMaterial,
     contents: ctx.contents(
-      type === "guide" ? guideTask(kit.language, concepts.map((c) => c.name)) : summaryTask(kit.language),
+      type === "guide" ? guideTask(kit.language, concepts.map((c) => c.name), notationFor(kit.subject)) : summaryTask(kit.language, notationFor(kit.subject)),
     ),
   });
   const output: Output = {
@@ -609,12 +706,75 @@ export async function generateDocument(kitId: string, type: "guide" | "summary",
     kitId,
     type,
     title: type === "guide" ? `${kit.title}: Study guide` : `${kit.title}: Summary`,
-    content: stripFence(text),
+    content: await checkText(stripFence(text)),
     createdAt: Date.now(),
   };
   await kitOrThrow(kitId);
   await db.outputs.add(output);
   return output;
+}
+
+// ---------- Reaction sheet ----------
+
+export type Reaction = ReactionSheet["reactions"][number];
+
+export async function generateReactionSheet(kitId: string, signal?: AbortSignal): Promise<Output> {
+  const kit = await kitOrThrow(kitId);
+  const ctx = await kitContext(kitId, "smart", SYSTEM, signal);
+  const concepts = await db.concepts.where("kitId").equals(kitId).sortBy("order");
+  const res = await generateJson<ReactionSheet>({
+    role: "smart",
+    task: "reactions",
+    kitId,
+    signal,
+    system: SYSTEM,
+    config: ctx.config,
+    cachedMaterial: ctx.cachedMaterial,
+    contents: ctx.contents(reactionTask(kit.language, concepts.map((c) => c.name))),
+    schema: reactionSchema,
+  });
+  const fields = (r: Reaction) => [r.substrate, r.reagents, r.product, r.notes];
+  const reactions = await checkItems(res.reactions.filter((r) => r.name.trim()), fields, (r, fix) => ({
+    ...r,
+    concept: matchConcept(r.concept, concepts),
+    substrate: fix(r.substrate),
+    reagents: fix(r.reagents),
+    product: fix(r.product),
+    notes: fix(r.notes),
+  }));
+  const output: Output = {
+    id: newId(),
+    kitId,
+    type: "reactions",
+    title: `${kit.title}: Reaction sheet`,
+    content: JSON.stringify({ reactions } satisfies ReactionSheet),
+    createdAt: Date.now(),
+  };
+  await kitOrThrow(kitId);
+  await db.outputs.add(output);
+  return output;
+}
+
+/**
+ * Two cards per reaction, both ways round: what the reagents make of the starting material, and
+ * which reagents turn it into the product. Built from the sheet, no API call. Cards already in the
+ * deck are skipped, so it can run again after the sheet is rewritten.
+ */
+export async function reactionCards(kitId: string, reactions: Reaction[]): Promise<number> {
+  const existing = new Set((await db.flashcards.where("kitId").equals(kitId).toArray()).map((c) => norm(c.front)));
+  const cards: Flashcard[] = [];
+  const add = (front: string, back: string, concept: string) => {
+    if (existing.has(norm(front))) return;
+    existing.add(norm(front));
+    cards.push({ id: newId(), kitId, front, back, kind: "qa", concept, srs: newCard(), createdAt: Date.now() });
+  };
+  for (const r of reactions) {
+    if (!r.substrate.trim() || !r.product.trim() || !r.reagents.trim()) continue;
+    add(`${r.substrate} + ${r.reagents} → ?`, `${r.product}\n\n${r.name}${r.regiochemistry ? ` · ${r.regiochemistry}` : ""}${r.stereochemistry ? ` · ${r.stereochemistry}` : ""}`, r.concept);
+    add(`${r.substrate} → ${r.product}\n\nWhich reagents?`, `${r.reagents}\n\n${r.name}`, r.concept);
+  }
+  await db.flashcards.bulkAdd(cards);
+  return cards.length;
 }
 
 // ---------- Podcast ----------
@@ -684,7 +844,7 @@ export async function generatePodcast(
   });
   // Models overshoot length targets; trim so an "8-minute" episode can't become 25 minutes (and 3x the cost).
   script.lines = fitScript(
-    script.lines.filter((l) => l.text.trim()),
+    script.lines.filter((l) => l.text.trim()).map((l) => ({ ...l, text: molsAsText(l.text) })),
     settings.podcastMinutes * PODCAST_WPM,
   );
   const { audio, durationSec } = await recordPodcast(kitId, script, opts);
@@ -759,7 +919,7 @@ export async function tutorReply(
   signal?: AbortSignal,
 ): Promise<string> {
   const kit = await kitOrThrow(kitId);
-  const system = tutorSystem(socratic, kit.language);
+  const system = tutorSystem(socratic, kit.language, notationFor(kit.subject));
   const ctx = await kitContext(kitId, "smart", system, signal);
   // The material is the first turn (cached, or inline as a stable prefix), then the conversation.
   const contents: Content[] = [

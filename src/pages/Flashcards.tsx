@@ -1,10 +1,12 @@
 import clsx from "clsx";
 import { useLiveQuery } from "dexie-react-hooks";
-import { Layers, Pencil, Plus, RotateCcw, Shuffle, Sparkles, Trash } from "lucide-react";
+import { Layers, Pencil, Plus, RotateCcw, Scan, Shuffle, Sparkles, Trash } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { FigureView } from "../components/FigureView";
 import { InlineMarkdown } from "../components/Markdown";
 import { Badge, Button, Card, Empty, ErrorBox, Field, inputClass, Modal, PageHeader, Progress, Segmented, Spinner, MissingKit } from "../components/ui";
-import { db, newId, type Flashcard } from "../lib/db";
+import { db, newId, type Figure, type Flashcard } from "../lib/db";
+import { candidatePages, makeDiagramCards, PAGES_PER_RUN } from "../lib/figures";
 import { shuffle, useKit } from "../lib/hooks";
 import { runJob, useJob } from "../lib/jobs";
 import { formatInterval, isDue, newCard, preview, Rating, review, type Grade } from "../lib/srs";
@@ -16,8 +18,17 @@ export default function Flashcards() {
   const [mode, setMode] = useState<"review" | "browse">("review");
   const [more, setMore] = useState(false);
   const [focus, setFocus] = useState("");
+  const [diagrams, setDiagrams] = useState(false);
+  /** How the last diagram run went. Jobs vanish when they succeed, so the outcome is kept here. */
+  const [diagramNote, setDiagramNote] = useState("");
   const job = useJob(`cards:${kitId}`);
-  const due = useMemo(() => (cards ?? []).filter((c) => isDue(c.srs)), [cards]);
+  const diagramJob = useJob(`diagrams:${kitId}`);
+  const figures = useLiveQuery(async () => new Map((await db.figures.where("kitId").equals(kitId).toArray()).map((f) => [f.id, f])), [kitId]);
+  const scannable = useLiveQuery(() => candidatePages(kitId).then((ids) => ids.length), [kitId]);
+  // A diagram card can only be shown where its image is; on another device it waits for sync.
+  const usable = useMemo(() => (cards ?? []).filter((c) => !c.figure || !!figures?.get(c.figure.id)?.image), [cards, figures]);
+  const waiting = (cards?.length ?? 0) - usable.length;
+  const due = useMemo(() => usable.filter((c) => isDue(c.srs)), [usable]);
 
   const generate = (count: number, f?: string) =>
     runJob(`cards:${kitId}`, async ({ signal, report }) => {
@@ -25,9 +36,21 @@ export default function Flashcards() {
       await generateFlashcards(kitId, { count, focus: f, signal });
     });
 
+  const findDiagrams = () =>
+    runJob(`diagrams:${kitId}`, async ({ signal, report }) => {
+      report("Looking for labelled diagrams in your slides");
+      setDiagramNote("");
+      const res = await makeDiagramCards(kitId, { signal, onProgress: (done, total) => report(`Looking for labelled diagrams: page ${done} of ${total}`) });
+      setDiagramNote(
+        res.cards
+          ? `Made ${res.cards} cards from ${res.figures} diagram${res.figures === 1 ? "" : "s"}.${res.left ? ` ${res.left} more pages to look at.` : ""}`
+          : `No labelled diagrams on those ${res.pages} pages.${res.left ? ` ${res.left} more to look at.` : ""}`,
+      );
+    });
+
   if (kit === null) return <MissingKit />;
 
-  if (!kit || !cards) return <Spinner label="Loading" />;
+  if (!kit || !cards || !figures) return <Spinner label="Loading" />;
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -36,14 +59,29 @@ export default function Flashcards() {
         subtitle={`${kit.title} · ${cards.length} cards · ${due.length} due`}
         back={`/kit/${kitId}`}
         actions={
-          cards.length > 0 && (
-            <Button variant="secondary" size="sm" onClick={() => setMore(true)} loading={!!job && !job.done}>
-              <Sparkles className="size-4" /> More cards
-            </Button>
-          )
+          <>
+            {!!scannable && (
+              <Button variant="secondary" size="sm" onClick={() => setDiagrams(true)} loading={!!diagramJob && !diagramJob.done}>
+                <Scan className="size-4" /> Diagram cards
+              </Button>
+            )}
+            {cards.length > 0 && (
+              <Button variant="secondary" size="sm" onClick={() => setMore(true)} loading={!!job && !job.done}>
+                <Sparkles className="size-4" /> More cards
+              </Button>
+            )}
+          </>
         }
       />
       {job?.error && <ErrorBox error={job.error} onRetry={() => generate(20)} />}
+      {diagramJob?.error && <ErrorBox error={diagramJob.error} onRetry={findDiagrams} />}
+      {diagramJob && !diagramJob.done && (
+        <Card className="mb-4 p-3">
+          <Spinner label={diagramJob.status} />
+        </Card>
+      )}
+      {!diagramJob && diagramNote && <Card className="mb-4 p-3 text-sm">{diagramNote}</Card>}
+      {waiting > 0 && <p className="mb-3 text-xs text-muted">{waiting} diagram card{waiting === 1 ? " is" : "s are"} waiting for {waiting === 1 ? "its image" : "their images"} to sync to this device.</p>}
 
       {cards.length === 0 ? (
         job && !job.done ? (
@@ -69,7 +107,7 @@ export default function Flashcards() {
               ]}
             />
           </div>
-          {mode === "review" ? <Review cards={cards} due={due} /> : <Browse cards={cards} kitId={kitId} />}
+          {mode === "review" ? <Review cards={usable} due={due} figures={figures} /> : <Browse cards={cards} kitId={kitId} figures={figures} />}
         </>
       )}
 
@@ -89,11 +127,31 @@ export default function Flashcards() {
           </Button>
         </div>
       </Modal>
+
+      <Modal open={diagrams} onClose={() => setDiagrams(false)} title="Diagram cards">
+        <div className="space-y-3 text-sm">
+          <p>
+            Mnemo looks through your slides for labelled diagrams and turns every label into a card: the label is covered, and you name the part.
+          </p>
+          <p className="text-muted">
+            {scannable} page{scannable === 1 ? "" : "s"} to look at{(scannable ?? 0) > PAGES_PER_RUN ? `, ${PAGES_PER_RUN} per run` : ""}. About $0.002 a page. The slides were kept on this device when you added them, so this works for PDFs and photos added here.
+          </p>
+          <Button
+            className="w-full"
+            onClick={() => {
+              findDiagrams();
+              setDiagrams(false);
+            }}
+          >
+            <Scan className="size-4" /> Find diagrams
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }
 
-function Review({ cards, due }: { cards: Flashcard[]; due: Flashcard[] }) {
+function Review({ cards, due, figures }: { cards: Flashcard[]; due: Flashcard[]; figures: Map<string, Figure> }) {
   const [queue, setQueue] = useState<string[]>(() => due.map((c) => c.id));
   const [cram, setCram] = useState(false);
   const [flipped, setFlipped] = useState(false);
@@ -162,6 +220,7 @@ function Review({ cards, due }: { cards: Flashcard[]; due: Flashcard[] }) {
   const back = reversed ? current.front : current.back;
   const intervals = preview(current.srs);
   const total = doneCount + queue.length;
+  const figure = current.figure && figures.get(current.figure.id);
 
   return (
     <div>
@@ -172,6 +231,19 @@ function Review({ cards, due }: { cards: Flashcard[]; due: Flashcard[] }) {
           <RotateCcw className="size-4" />
         </button>
       </div>
+      {figure ? (
+        // A diagram card isn't flipped: the covered label opens in place.
+        <Card className="cursor-pointer select-none space-y-3 p-4 text-center" onClick={() => setFlipped((f) => !f)}>
+          <div className="flex items-center justify-between gap-2">
+            {cram ? <Badge>practice</Badge> : <span />}
+            {current.concept && <Badge>{current.concept}</Badge>}
+          </div>
+          <FigureView figure={figure} target={current.figure!.label} revealed={flipped} />
+          <div className="min-h-12">
+            {flipped ? <p className="text-xl font-semibold">{current.back}</p> : <p className="text-sm text-muted">{figure.title}: name the highlighted part. Tap to check.</p>}
+          </div>
+        </Card>
+      ) : (
       <div className={clsx("flip cursor-pointer select-none", flipped && "flipped")} onClick={() => setFlipped((f) => !f)}>
         <div className="flip-inner relative min-h-72">
           <Card className="flip-face absolute inset-0 flex flex-col items-center justify-center p-8 text-center">
@@ -185,6 +257,7 @@ function Review({ cards, due }: { cards: Flashcard[]; due: Flashcard[] }) {
           </Card>
         </div>
       </div>
+      )}
       <div className={clsx("mt-4 grid grid-cols-4 gap-2 transition", !flipped && "pointer-events-none opacity-30")}>
         {(
           [
@@ -204,7 +277,7 @@ function Review({ cards, due }: { cards: Flashcard[]; due: Flashcard[] }) {
   );
 }
 
-function Browse({ cards, kitId }: { cards: Flashcard[]; kitId: string }) {
+function Browse({ cards, kitId, figures }: { cards: Flashcard[]; kitId: string; figures: Map<string, Figure> }) {
   const [editing, setEditing] = useState<Flashcard | null>(null);
   const [query, setQuery] = useState("");
   const shown = cards.filter((c) => !query || `${c.front} ${c.back}`.toLowerCase().includes(query.toLowerCase()));
@@ -226,22 +299,37 @@ function Browse({ cards, kitId }: { cards: Flashcard[]; kitId: string }) {
           <Plus className="size-4" />
         </Button>
       </div>
-      {shown.map((c) => (
+      {shown.map((c) => {
+        const figure = c.figure && figures.get(c.figure.id);
+        return (
         <Card key={c.id} className="group flex gap-3 p-3">
+          {c.figure ? (
+            <div className="flex flex-1 items-center gap-3">
+              {figure?.image ? <FigureView figure={figure} target={c.figure.label} revealed className="shrink-0 [&_img]:max-h-20 [&_img]:max-w-28" /> : <div className="h-16 w-28 shrink-0 rounded-lg surface-2" />}
+              <div className="min-w-0">
+                <div className="text-sm font-medium">{c.back}</div>
+                <div className="truncate text-xs text-muted">Diagram card · {c.front}</div>
+              </div>
+            </div>
+          ) : (
           <div className="grid flex-1 gap-1 sm:grid-cols-[2fr_3fr] sm:gap-4">
             <InlineMarkdown className="text-sm font-medium">{c.front}</InlineMarkdown>
             <InlineMarkdown className="text-sm text-muted">{c.back}</InlineMarkdown>
           </div>
+          )}
           <div className="flex shrink-0 flex-col gap-1">
+            {!c.figure && (
             <button onClick={() => setEditing(c)} className="rounded p-1 text-muted hover:text-brand-600" aria-label="Edit">
               <Pencil className="size-4" />
             </button>
+            )}
             <button onClick={() => db.flashcards.delete(c.id)} className="rounded p-1 text-muted hover:text-rose-600" aria-label="Delete">
               <Trash className="size-4" />
             </button>
           </div>
         </Card>
-      ))}
+        );
+      })}
       <Modal open={!!editing} onClose={() => setEditing(null)} title={editing && cards.some((c) => c.id === editing.id) ? "Edit card" : "New card"}>
         {editing && (
           <div className="space-y-4">

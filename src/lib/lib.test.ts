@@ -92,11 +92,14 @@ const question = (concept: string, difficulty: 1 | 2 | 3, patch: Partial<Questio
 describe("smart study", () => {
   const now = new Date("2026-10-13T12:00:00Z");
 
-  it("levels and difficulty rise with mastery", () => {
+  it("concepts from before difficulty levels start from their mastery, gentler than before", () => {
     expect(levelOf({ attempts: 0, mastery: 0 })).toBe("new");
+    expect(targetDifficulty({ attempts: 0, mastery: 0 })).toBe(1);
     expect(targetDifficulty({ attempts: 3, mastery: 0.2 })).toBe(1);
     expect(targetDifficulty({ attempts: 3, mastery: 0.6 })).toBe(2);
-    expect(targetDifficulty({ attempts: 3, mastery: 0.9 })).toBe(3);
+    // Mastery 0.9 used to mean the hardest questions; now it's level 2 until earned.
+    expect(targetDifficulty({ attempts: 3, mastery: 0.9 })).toBe(2);
+    expect(targetDifficulty({ attempts: 3, mastery: 0.9, level: 2.8 })).toBe(3);
   });
 
   it("puts due reviews before weak, new, and strong concepts", () => {
@@ -127,7 +130,7 @@ describe("smart study", () => {
   });
 
   it("picks the question closest to the target difficulty and skips asked ones", () => {
-    const c = concept("x", { attempts: 4, mastery: 0.9 });
+    const c = concept("x", { attempts: 4, mastery: 0.9, level: 3 });
     const easy = question("x", 1);
     const hard = question("x", 3);
     const asked = question("x", 3, { askedAt: 1 });

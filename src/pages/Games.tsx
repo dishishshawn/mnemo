@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Badge, Button, Card, Empty, LinkButton, PageHeader, Spinner, MissingKit } from "../components/ui";
 import { db, newId, type Flashcard, type GameScore } from "../lib/db";
 import { shuffle, useKit } from "../lib/hooks";
+import { hasMol } from "../lib/mol";
 
 type Game = "match" | "builder" | "stacker";
 
@@ -19,7 +20,8 @@ export default function Games() {
 
   // Games need short answers: prefer term cards, fall back to short Q&A fronts.
   const terms = useMemo(() => {
-    const all = cards ?? [];
+    // Diagram cards and drawn structures don't work as text tiles.
+    const all = (cards ?? []).filter((c) => !c.figure && !hasMol(c.front) && !hasMol(c.back));
     const t = all.filter((c) => c.kind === "term" && plain(c.front).length <= 40);
     return t.length >= 6 ? t : all.filter((c) => plain(c.front).length <= 60);
   }, [cards]);

@@ -3,6 +3,7 @@
 // prefix, which Gemini's implicit cache bills at 10% of the input price.
 
 import type { Content } from "@google/genai";
+import { drawsStructures, SUBJECTS, type Subject } from "./subject";
 
 export const SYSTEM = `You are Mnemo, an expert teacher and study coach.
 You build study material strictly from the student's course material, given inside <material> tags.
@@ -34,6 +35,18 @@ export function taskOnly(task: string): Content[] {
 
 // ---------- Kit analysis ----------
 
+const subjectProperties = {
+  subject: {
+    type: "string",
+    enum: SUBJECTS.map((s) => s.value),
+    description: "The field the material belongs to. Microbiology, genetics, physiology and ecology are biology.",
+  },
+  quantitative: {
+    type: "boolean",
+    description: "True if the material teaches calculations a student must be able to do (formulas worked with numbers).",
+  },
+};
+
 export const analyzeSchema = {
   type: "object",
   properties: {
@@ -56,8 +69,9 @@ export const analyzeSchema = {
         required: ["name", "summary", "chunks"],
       },
     },
+    ...subjectProperties,
   },
-  required: ["title", "description", "emoji", "concepts"],
+  required: ["title", "description", "emoji", "concepts", "subject", "quantitative"],
 };
 
 export interface AnalyzeResult {
@@ -65,6 +79,55 @@ export interface AnalyzeResult {
   description: string;
   emoji: string;
   concepts: { name: string; summary: string; chunks?: number[] }[];
+  subject?: Subject;
+  quantitative?: boolean;
+}
+
+// ---------- Subjects ----------
+
+/** For kits mapped before subjects existed: a cheap call on the kit's outline, no material. */
+export const subjectSchema = { type: "object", properties: subjectProperties, required: ["subject", "quantitative"] };
+
+export function subjectTask(kit: { title: string; description: string }, concepts: { name: string; summary: string }[]): string {
+  return `A study kit is titled "${kit.title}": ${kit.description}
+Its concepts:
+${concepts.map((c) => `- ${c.name}: ${c.summary}`).join("\n")}
+
+Which field is it, and does it teach calculations?`;
+}
+
+/** How to write a molecule so the app can draw and check it (chem.ts, mol.ts). */
+export const MOL_RULE = `Chemical structures: wherever a specific molecule's structure matters (in a question, an option, an answer or an explanation), draw it with a structure token {{mol:SMILES|name}} instead of describing it in words. SMILES must be valid and include stereochemistry (@, @@, /, \\) whenever it matters. "name" is the compound's IUPAC or common name, only for a specific real compound; for intermediates, carbocations, generic or partial structures, leave it out: {{mol:SMILES}}. Write an R group as *. A token stands on its own: never inside $...$, backticks or bold. Write reactions and formulas with mhchem, e.g. $\\ce{CH3CH2OH ->[H2SO4][\\Delta] CH2=CH2 + H2O}$.`;
+
+const BIO_NOTATION = "Italicise genus and species names (*Escherichia coli*, then *E. coli*) and gene names (*lacZ*); protein names stay upright (LacZ).";
+
+const QUESTION_STYLES: Partial<Record<Subject, string>> = {
+  "organic-chemistry": `Question styles for organic chemistry (use the ones the material supports):
+- predict the major product of a reaction
+- the reagents or conditions that carry out a transformation
+- the next intermediate in a mechanism, or its rate-determining step
+- regiochemistry (Markovnikov or anti-Markovnikov) and stereochemistry (syn or anti addition, inversion or racemisation, R/S, E/Z)
+- rank acidity, basicity, carbocation or radical stability, nucleophilicity or leaving-group ability
+- SN1, SN2, E1 or E2 for a given substrate, nucleophile and solvent
+- spectroscopy: key IR bands, the number of 1H NMR signals and their splitting
+- a short synthesis: the sequence of reagents from one structure to another.
+For multiple choice about structures, make each option a single structure token, and make the wrong ones the structures a student gets from a typical mistake: the other regiochemistry, the wrong stereochemistry, a missed carbocation rearrangement, the wrong functional group.`,
+  biochemistry: `Question styles for biochemistry (use the ones the material supports): the structures of amino acids, sugars, nucleotides and lipids; where a pathway step happens, its substrates, products, enzyme and regulation; enzyme kinetics and inhibition; how a structural feature produces a function; the effect of a mutation, an inhibitor or a missing cofactor.`,
+  biology: `Question styles for biology (use the ones the material supports): the steps of a process in order and what triggers each; how a structure's features produce its function; what happens when a gene is knocked out, a condition changes or a step is blocked; what an experiment or data set (growth curves, tables, gels, pedigrees) shows and why; telling similar terms apart and applying them to a new organism or example.`,
+  chemistry: `Question styles for chemistry (use the ones the material supports): stoichiometry, equilibrium, acids and bases, thermodynamics and kinetics, applied to a new example. Write every equation with mhchem.`,
+};
+
+/** Notation the subject needs in anything written about it: structure tokens for chemistry, italics for biology. */
+export function notationFor(subject?: Subject): string {
+  const lines: string[] = [];
+  if (drawsStructures(subject)) lines.push(MOL_RULE);
+  if (subject === "biology" || subject === "biochemistry") lines.push(BIO_NOTATION);
+  return lines.join("\n");
+}
+
+/** Question styles and notation for the kit's subject, for question-writing tasks. */
+export function questionGuidance(subject?: Subject): string {
+  return [subject ? QUESTION_STYLES[subject] : undefined, notationFor(subject)].filter(Boolean).join("\n");
 }
 
 export function analyzeTask(language: string): string {
@@ -106,16 +169,20 @@ export function flashcardTask(opts: {
   concepts: string[];
   existingFronts: string[];
   focus?: string;
+  /** Subject notation (notationFor). */
+  notation?: string;
 }): string {
   return `Task: write ${opts.count} flashcards.
 - About 60% "term" cards: front is a key term or name (1 to 4 words, no question mark); back is a precise definition in at most 25 words.
 - The rest "qa" cards: front is a focused question that tests understanding; back is the answer in at most 40 words.
 - Spread cards across these concepts: ${opts.concepts.join("; ")}.
 - Each card tests exactly one idea. Do not repeat these existing fronts: ${opts.existingFronts.length ? opts.existingFronts.slice(0, 200).join(" | ") : "(none)"}.
-${opts.focus ? `- The student asked to focus on: ${opts.focus}\n` : ""}${languageLine(opts.language)}`;
+${opts.focus ? `- The student asked to focus on: ${opts.focus}\n` : ""}${opts.notation ? `${opts.notation}\n` : ""}${languageLine(opts.language)}`;
 }
 
 // ---------- Questions (Smart Study and practice tests) ----------
+
+export type QuestionKind = "mcq" | "tf" | "short" | "numeric";
 
 export const questionSchema = {
   type: "object",
@@ -126,18 +193,20 @@ export const questionSchema = {
         type: "object",
         properties: {
           concept: { type: "string" },
-          type: { type: "string", enum: ["mcq", "tf", "short"] },
+          type: { type: "string", enum: ["mcq", "tf", "short", "numeric"] },
           difficulty: { type: "integer", minimum: 1, maximum: 3, description: "1, 2 or 3" },
           prompt: { type: "string" },
           options: {
             type: "array",
             items: { type: "string" },
-            description: "mcq: exactly 4 options. tf: [\"True\", \"False\"]. short: empty array.",
+            description: "mcq: exactly 4 options. tf: [\"True\", \"False\"]. short and numeric: empty array.",
           },
-          answerIndex: { type: "integer", description: "Index of the correct option; -1 for short answer" },
+          answerIndex: { type: "integer", description: "Index of the correct option; -1 for short answer and numeric" },
           answer: { type: "string", description: "The model answer, 1 to 3 sentences" },
           explanation: { type: "string", description: "Why the answer is right and the tempting wrong answers are wrong" },
           hint: { type: "string", description: "A Socratic nudge that points toward the idea without giving the answer away" },
+          expression: { type: "string", description: "Calculation questions only: the arithmetic that gives the answer. Otherwise empty." },
+          unit: { type: "string", description: "numeric only: the answer's unit, or empty if it has none" },
         },
         required: ["concept", "type", "difficulty", "prompt", "options", "answerIndex", "answer", "explanation", "hint"],
       },
@@ -149,7 +218,7 @@ export const questionSchema = {
 export interface QuestionResult {
   questions: {
     concept: string;
-    type: "mcq" | "tf" | "short";
+    type: QuestionKind;
     difficulty: number;
     prompt: string;
     options: string[];
@@ -157,49 +226,72 @@ export interface QuestionResult {
     answer: string;
     explanation: string;
     hint: string;
+    expression?: string;
+    unit?: string;
   }[];
 }
+
+/** The rule for calculation questions, whose answers the app works out itself (calc.ts). */
+export const NUMERIC_RULE = `- numeric: a calculation from the material with a single number as the answer, needing at least one arithmetic step (never a number the material simply states; that's multiple choice). The prompt gives every number needed. "expression" is the arithmetic that computes the answer from those numbers, written with numbers only (no names or units), + - * / ^ and parentheses, and the functions ln, log (base 10), log2, exp and sqrt, e.g. "log2(3.2e8/5e6)". "unit" is the answer's unit. "answer" shows the working and ends with the result.
+- A multiple-choice question whose answer is a calculated number also gets an "expression", and its correct option shows that number.`;
 
 export interface QuestionTarget {
   name: string;
   /** 0..1 */
   mastery: number;
   attempts: number;
+  /** Smart Study: the difficulty to write this concept's questions at (smart.ts targetDifficulty). */
+  difficulty?: 1 | 2 | 3;
 }
 
 export function questionTask(opts: {
   language: string;
   count: number;
   targets: QuestionTarget[];
-  types: ("mcq" | "tf" | "short")[];
+  types: QuestionKind[];
   avoid: string[];
   steer?: string;
   purpose: "smart" | "test";
+  /** Earlier questions the student reported as wrong, and why. */
+  reported?: { prompt: string; reason: string }[];
+  /** Subject-specific question styles and notation (subject.ts). */
+  guidance?: string;
 }): string {
+  const perConcept = opts.purpose === "smart" && opts.targets.every((t) => t.difficulty);
   const targets = opts.targets
     .map((t) => {
       const level = t.attempts === 0 ? "new" : t.mastery < 0.4 ? "weak" : t.mastery < 0.75 ? "developing" : "strong";
-      return `- ${t.name} (${level})`;
+      return perConcept ? `- ${t.name} (${level}): difficulty ${t.difficulty}` : `- ${t.name} (${level})`;
     })
     .join("\n");
   return `Task: write ${opts.count} ${opts.purpose === "test" ? "exam-style practice test" : "adaptive practice"} questions.
 Target concepts and the student's current level:
 ${targets}
 
-Difficulty: 1 = recall a key fact or definition; 2 = explain or apply an idea to a new example; 3 = analyse, compare, or solve a multi-step problem.
+Difficulty:
+1 = recall: a fact, term or definition the material states directly, asked plainly. Wrong options are clearly different from the answer, so a student who has read the material gets it right.
+2 = understand and apply: explain why, connect two ideas, or apply an idea to a familiar example. Wrong options are plausible.
+3 = analyse: compare, predict an outcome, interpret data, or solve a multi-step problem. Wrong options are common misconceptions.
 ${
-  opts.purpose === "smart"
-    ? "Match difficulty to level: new -> mostly 1, weak -> 1 or 2, developing -> 2, strong -> 3. Put more questions on weak and new concepts."
-    : "Cover every target concept at least once, with a realistic exam mix of difficulties (roughly 30% level 1, 50% level 2, 20% level 3)."
+  opts.purpose === "test"
+    ? "Cover every target concept at least once, with a realistic exam mix of difficulties (roughly 30% level 1, 50% level 2, 20% level 3)."
+    : perConcept
+      ? "Write each concept's questions at the difficulty listed for it. Put more questions on weak and new concepts."
+      : "Match difficulty to level: new -> mostly 1, weak -> 1 or 2, developing -> 2, strong -> 3. Put more questions on weak and new concepts."
 }
 Allowed types: ${opts.types.join(", ")}. Use a mix if more than one is allowed.
-- mcq: exactly 4 options, one clearly correct; distractors must be plausible misconceptions, similar in length and style. Never use "all of the above" or "none of the above".
+- mcq: exactly 4 options, one clearly correct; wrong options similar in length and style to the answer, and as close to it as the difficulty calls for. Never use "all of the above" or "none of the above".
 - tf: a precise statement, written as a plain statement (never prefixed with "True or False:"); avoid trick wording and absolute words used only to make it false.
 - short: answerable in 1 to 3 sentences; the model answer lists the essential points a grader should look for.
-- The hint must never reveal the answer; ask a guiding question or point at the relevant idea.
-${opts.avoid.length ? `Do not repeat or closely paraphrase these earlier questions:\n${opts.avoid.slice(-60).map((q) => `- ${q}`).join("\n")}\n` : ""}${
-    opts.steer ? `The student asked: "${opts.steer}". Follow that where the material allows.\n` : ""
-  }${languageLine(opts.language)}`;
+${opts.types.includes("numeric") ? `${NUMERIC_RULE}\n` : ""}- The hint must never reveal the answer; ask a guiding question or point at the relevant idea.
+${opts.guidance ? `${opts.guidance}\n` : ""}${opts.avoid.length ? `Do not repeat or closely paraphrase these earlier questions:\n${opts.avoid.slice(-60).map((q) => `- ${q}`).join("\n")}\n` : ""}${
+    opts.reported?.length
+      ? `The student reported these earlier questions as wrong. Don't repeat them or make the same kind of mistake:\n${opts.reported
+          .slice(-10)
+          .map((r) => `- "${r.prompt}" (${r.reason})`)
+          .join("\n")}\n`
+      : ""
+  }${opts.steer ? `The student asked: "${opts.steer}". Follow that where the material allows.\n` : ""}${languageLine(opts.language)}`;
 }
 
 // ---------- Grading free-text answers (fast model, no material: cheap) ----------
@@ -296,7 +388,7 @@ Assess the explanation. ${languageLine(opts.language)}`;
 
 // ---------- Long-form outputs ----------
 
-export function guideTask(language: string, concepts: string[]): string {
+export function guideTask(language: string, concepts: string[], notation = ""): string {
   return `Task: write a complete study guide for this material, in Markdown.
 Structure:
 1. "# <title>" and a 2-3 sentence overview.
@@ -305,17 +397,110 @@ Structure:
 4. "## Memory aids": mnemonics or analogies for the hardest ideas.
 5. "## Check yourself": 8 to 12 questions mixing recall and application, then "## Answer key" with brief answers.
 Cover these concepts: ${concepts.join("; ")}.
-Be thorough but tight: no filler, no repetition. ${languageLine(language)}`;
+Be thorough but tight: no filler, no repetition.${notation ? `\n${notation}` : ""}
+${languageLine(language)}`;
 }
 
-export function summaryTask(language: string): string {
+export function summaryTask(language: string, notation = ""): string {
   return `Task: write a concise summary of this material, in Markdown.
 Structure:
 1. "## TL;DR": 3 to 5 bullets with the most important takeaways.
 2. "## Key points": short sections by topic, each a few tight bullets.
 3. "## Must-know terms": a bulleted list of term: one-line definition.
-Aim for roughly one tenth the length of the material, at most 900 words. ${languageLine(language)}`;
+Aim for roughly one tenth the length of the material, at most 900 words.${notation ? `\n${notation}` : ""}
+${languageLine(language)}`;
 }
+
+// ---------- Reaction sheet (organic chemistry) ----------
+
+export const reactionSchema = {
+  type: "object",
+  properties: {
+    reactions: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "The reaction's name, e.g. \"Hydrobromination of an alkene\"" },
+          concept: { type: "string", description: "The concept it belongs to" },
+          substrate: { type: "string", description: "A structure token for a representative starting material" },
+          reagents: { type: "string", description: "Reagents and conditions, with mhchem, e.g. \"$\\ce{HBr}$, peroxides\"" },
+          product: { type: "string", description: "A structure token for that starting material's major product" },
+          regiochemistry: { type: "string", description: "e.g. \"Markovnikov\"; empty if it doesn't apply" },
+          stereochemistry: { type: "string", description: "e.g. \"anti addition\", \"inversion\", \"racemic\"; empty if it doesn't apply" },
+          mechanism: { type: "string", description: "e.g. \"carbocation intermediate, rearrangements possible\", \"concerted\", \"radical chain\"" },
+          notes: { type: "string", description: "One sentence: the catch students get wrong" },
+        },
+        required: ["name", "concept", "substrate", "reagents", "product", "regiochemistry", "stereochemistry", "mechanism", "notes"],
+      },
+    },
+  },
+  required: ["reactions"],
+};
+
+export interface ReactionSheet {
+  reactions: {
+    name: string;
+    concept: string;
+    substrate: string;
+    reagents: string;
+    product: string;
+    regiochemistry: string;
+    stereochemistry: string;
+    mechanism: string;
+    notes: string;
+  }[];
+}
+
+export function reactionTask(language: string, concepts: string[]): string {
+  return `Task: make a reaction sheet for revising this material: every reaction it teaches, in the order it presents them.
+For each reaction: a representative starting material and its major product as structure tokens (use the material's own example when it has one; a general structure with * for R groups when the reaction is general), the reagents and conditions, the regiochemistry, the stereochemistry, the kind of mechanism, and the one catch students get wrong.
+Skip reactions the material only mentions in passing. At most 40. Concepts: ${concepts.join("; ")}.
+${MOL_RULE}
+${languageLine(language)}`;
+}
+
+// ---------- Diagram cards: finding labels on a page image ----------
+
+const box = (what: string) => ({ type: "array", items: { type: "integer" }, description: `${what}, as [ymin, xmin, ymax, xmax] scaled 0 to 1000` });
+
+export const figureSchema = {
+  type: "object",
+  properties: {
+    diagrams: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "What the diagram shows, in a few words" },
+          box: box("The whole diagram, labels included"),
+          labels: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                text: { type: "string", description: "The label's text exactly as printed" },
+                box: box("A tight box around the label's text itself, not the part it points to"),
+              },
+              required: ["text", "box"],
+            },
+          },
+        },
+        required: ["title", "box", "labels"],
+      },
+    },
+  },
+  required: ["diagrams"],
+};
+
+export interface FigureResult {
+  diagrams: { title: string; box: number[]; labels: { text: string; box: number[] }[] }[];
+}
+
+export const FIGURE_PROMPT = `Find the labelled diagrams on this page: drawings, micrographs or schematics whose parts are named by text labels, often with leader lines. Ignore charts that only have axis labels, tables, and plain text.
+For each diagram give a title, its bounding box, and every label that names a part of it: the label's exact text on one line and a tight box around that text.
+Leave out panel letters (A, B, (c)), numbers and measurements on their own, scale bars, the diagram's title, credits, and sentences of explanation.
+If there is no labelled diagram, return an empty list.`;
 
 // ---------- Podcast ----------
 
@@ -360,13 +545,13 @@ ${opts.focus ? `- Focus on: ${opts.focus}\n` : ""}${languageLine(opts.language)}
 
 // ---------- Tutor ----------
 
-export function tutorSystem(socratic: boolean, language: string): string {
+export function tutorSystem(socratic: boolean, language: string, notation = ""): string {
   return `${SYSTEM}
 
-${tutorInstructions(socratic, language)}`;
+${tutorInstructions(socratic, language, notation)}`;
 }
 
-export function tutorInstructions(socratic: boolean, language: string): string {
+export function tutorInstructions(socratic: boolean, language: string, notation = ""): string {
   return `You are now tutoring the student one-on-one about the material.
 ${
   socratic
@@ -374,18 +559,24 @@ ${
     : `Explain clearly and directly, with examples. After explaining, offer a quick question to check understanding.`
 }
 Keep replies short (under 150 words) unless the student asks for more. If a question is outside the material, say so briefly and help anyway with general knowledge, flagged as such.
-${languageLine(language)}`;
+${notation ? `${notation}\n` : ""}${languageLine(language)}`;
 }
 
 // ---------- Ingestion (fast model) ----------
 
+/** Drawn molecules survive transcription as structure tokens, so questions can draw them again. */
+const STRUCTURE_TRANSCRIPTION = `For each chemical structure drawn (skeletal or condensed formula), write it as a structure token {{mol:SMILES|name}} with stereochemistry where it is shown, followed by a one-line description; give a name only for a specific real compound.`;
+
 export const TRANSCRIBE_PROMPTS: Record<string, string> = {
   document: `Convert this document to clean, complete Markdown so a student can study from the text alone.
+Start each page with the marker <!-- page N --> on its own line, where N is the page number, counting from 1.
 Keep every piece of content in its original order: headings, paragraphs, lists, tables (as Markdown tables), equations (LaTeX).
 For each figure, chart, or diagram, add "> Figure: " followed by a description of what it shows and every label or value in it.
+${STRUCTURE_TRANSCRIPTION}
 Do not summarise or omit anything. Output only the Markdown.`,
   image: `Transcribe this image of study material to Markdown. Include all text exactly, including handwriting (mark unclear words with [?]).
 Write equations in LaTeX. For diagrams, add "> Figure: " followed by what the diagram shows, including all labels.
+${STRUCTURE_TRANSCRIPTION}
 Output only the Markdown.`,
   audio: `Transcribe this lecture or study recording into clean Markdown notes a student can study from.
 Remove filler words and false starts but keep all substantive content, examples, and anything the speaker says is important or will be on the exam.

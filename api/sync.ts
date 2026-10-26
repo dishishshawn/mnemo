@@ -1,7 +1,7 @@
 // Mnemo sync endpoint (Vercel Function). Stores opaque, client-encrypted blobs; it never sees a
 // key or plaintext. A vault id is a SHA-256-sized value derived from the user's sync code.
 //
-//   GET  /api/sync?vault=<64 hex>&name=state|src-<uuid>   [If-None-Match]  -> 200 bytes | 304 | 204 (none)
+//   GET  /api/sync?vault=<64 hex>&name=state|src-<uuid>|img-<uuid>   [If-None-Match]  -> 200 bytes | 304 | 204 (none)
 //   PUT  /api/sync?vault=<64 hex>&name=...                [If-Match]       -> 200 {etag} | 412
 //
 // PUT on "state" without If-Match only creates; with If-Match it's a compare-and-swap, so two
@@ -9,7 +9,7 @@
 import { BlobPreconditionFailedError, get, head, put } from "@vercel/blob";
 
 const VAULT = /^[0-9a-f]{64}$/;
-const NAME = /^(state|src-[0-9a-f-]{36})$/;
+const NAME = /^(state|(src|img)-[0-9a-f-]{36})$/;
 // Vercel Functions accept request bodies up to 4.5 MB.
 const MAX_BYTES = 4 * 1024 * 1024;
 // no-transform: the payload is already gzipped and encrypted, so CDN compression only wastes time.
@@ -52,7 +52,7 @@ export default {
         if (body.byteLength === 0) return json({ error: "Empty body." }, 400);
         if (body.byteLength > MAX_BYTES) return json({ error: "Too large." }, 413);
         const ifMatch = strong(request.headers.get("if-match"));
-        // Source texts never change, so overwriting one is harmless; state needs create-or-CAS.
+        // Source texts and diagram images never change, so overwriting one is harmless; state needs create-or-CAS.
         const isState = name === "state";
         try {
           const blob = await put(pathname, Buffer.from(body), {

@@ -5,12 +5,19 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { InlineMarkdown, Markdown } from "../components/Markdown";
 import { Badge, Button, Card, ErrorBox, Field, inputClass, PageHeader, Spinner, MissingKit } from "../components/ui";
+import { formatNumber, matches, parseAnswer } from "../lib/calc";
 import { db, newId, type Question, type TestRun } from "../lib/db";
 import { useKit } from "../lib/hooks";
 import { applyAnswer } from "../lib/smart";
 import { generateTestQuestions, gradeShortAnswers } from "../lib/study";
 
-type QType = "mcq" | "tf" | "short";
+type QType = Question["type"];
+
+/** A typed number is right within the tolerance of the app's own answer (calc.ts). */
+const numericRight = (q: Question, typed = "") => {
+  const v = parseAnswer(typed);
+  return v !== null && !!q.numeric && matches(v, q.numeric.value);
+};
 
 export default function PracticeTest() {
   const { kitId, kit } = useKit();
@@ -30,15 +37,27 @@ export default function PracticeTest() {
       {run ? (
         <TestView run={run} onExit={() => setParams({})} />
       ) : (
-        <Setup kitId={kitId} onStart={(id) => setParams({ run: id })} history={history ?? []} onOpen={(id) => setParams({ run: id })} />
+        <Setup kitId={kitId} quantitative={!!kit.quantitative} onStart={(id) => setParams({ run: id })} history={history ?? []} onOpen={(id) => setParams({ run: id })} />
       )}
     </div>
   );
 }
 
-function Setup({ kitId, onStart, history, onOpen }: { kitId: string; onStart: (id: string) => void; history: TestRun[]; onOpen: (id: string) => void }) {
+function Setup({
+  kitId,
+  quantitative,
+  onStart,
+  history,
+  onOpen,
+}: {
+  kitId: string;
+  quantitative: boolean;
+  onStart: (id: string) => void;
+  history: TestRun[];
+  onOpen: (id: string) => void;
+}) {
   const [count, setCount] = useState(15);
-  const [types, setTypes] = useState<QType[]>(["mcq", "tf", "short"]);
+  const [types, setTypes] = useState<QType[]>(quantitative ? ["mcq", "tf", "short", "numeric"] : ["mcq", "tf", "short"]);
   const [minutes, setMinutes] = useState(0);
   const [focus, setFocus] = useState("");
   const [loading, setLoading] = useState(false);
@@ -81,6 +100,7 @@ function Setup({ kitId, onStart, history, onOpen }: { kitId: string; onStart: (i
                 ["mcq", "Multiple choice"],
                 ["tf", "True / false"],
                 ["short", "Short answer"],
+                ...(quantitative ? [["numeric", "Calculation"]] : []),
               ] as [QType, string][]
             ).map(([t, label]) => (
               <button key={t} onClick={() => toggle(t)} className={clsx("rounded-xl px-3 py-2 text-sm font-medium", types.includes(t) ? "bg-brand-300 text-brand-900 dark:bg-brand-500 dark:text-white" : "surface-2")}>
@@ -172,6 +192,8 @@ function TestView({ run, onExit }: { run: TestRun; onExit: () => void }) {
         if (q.type === "short") {
           const g = graded.get(q.id);
           results[q.id] = { score: g?.score ?? 0, feedback: g?.feedback ?? "" };
+        } else if (q.type === "numeric") {
+          results[q.id] = { score: numericRight(q, answers[q.id]) ? 1 : 0, feedback: "" };
         } else {
           results[q.id] = { score: answers[q.id] === String(q.answerIndex) ? 1 : 0, feedback: "" };
         }
@@ -256,6 +278,18 @@ function TestView({ run, onExit }: { run: TestRun; onExit: () => void }) {
                 onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
                 placeholder="Your answer"
               />
+            ) : q.type === "numeric" ? (
+              <div className="flex items-center gap-2">
+                <input
+                  className={clsx(inputClass, "flex-1 tabular-nums")}
+                  disabled={finished}
+                  value={answers[q.id] ?? ""}
+                  autoComplete="off"
+                  onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
+                  placeholder="Your answer, e.g. 3.2e8"
+                />
+                {q.numeric?.unit && <span className="shrink-0 text-sm text-muted">{q.numeric.unit}</span>}
+              </div>
             ) : (
               <div className="space-y-2">
                 {q.options.map((opt, i) => {
@@ -287,6 +321,12 @@ function TestView({ run, onExit }: { run: TestRun; onExit: () => void }) {
                 {q.type === "short" && (
                   <div className="rounded-lg surface-2 p-2">
                     <b>Model answer:</b> <InlineMarkdown className="inline">{q.answer}</InlineMarkdown>
+                  </div>
+                )}
+                {q.type === "numeric" && q.numeric && (
+                  <div className="space-y-1 rounded-lg surface-2 p-2">
+                    <InlineMarkdown className="font-semibold">{`Answer: ${formatNumber(q.numeric.value)}${q.numeric.unit ? ` ${q.numeric.unit}` : ""}`}</InlineMarkdown>
+                    <InlineMarkdown className="text-muted">{q.answer}</InlineMarkdown>
                   </div>
                 )}
                 <Markdown className="text-sm text-muted">{q.explanation}</Markdown>

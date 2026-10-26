@@ -1,6 +1,7 @@
 import Dexie, { type EntityTable } from "dexie";
 import type { Card as FsrsCard } from "ts-fsrs";
 import type { PdfMode } from "./ingest";
+import type { Subject } from "./subject";
 
 export type SourceKind = "pdf" | "docx" | "pptx" | "image" | "audio" | "video" | "youtube" | "web" | "text";
 export type JobStatus = "pending" | "processing" | "ready" | "error";
@@ -26,6 +27,10 @@ export interface Kit {
   lastStudiedAt?: number;
   /** Local date "YYYY-MM-DD". Drives the daily quota and the exam-day forecast (plan.ts). */
   examDate?: string;
+  /** Set when the kit is mapped (or on first use for older kits); the student can change it. */
+  subject?: Subject;
+  /** The material teaches calculations, so Smart Study also asks for numeric answers. */
+  quantitative?: boolean;
 }
 
 export interface Source {
@@ -70,6 +75,8 @@ export interface Concept {
   correct: number;
   /** 0..1, an exponential moving average of recent scores. */
   mastery: number;
+  /** Question difficulty this concept is at, 1 to 3 (smart.ts). Missing on concepts from before it existed. */
+  level?: number;
   /** Keys of the material chunks that teach this concept (see material.ts). */
   chunkKeys?: string[];
 }
@@ -81,11 +88,61 @@ export interface Flashcard {
   back: string;
   kind: "term" | "qa";
   concept?: string;
+  /** A diagram card: recall the label hidden at `label` on the figure. `back` is that label. */
+  figure?: { id: string; label: number };
   srs: FsrsCard;
   createdAt: number;
 }
 
-export type QuestionType = "mcq" | "tf" | "short";
+/**
+ * A labelled diagram cut out of a slide, for diagram cards (figures.ts). The image syncs as its own
+ * encrypted blob, like a source's text; the rest travels with the snapshot.
+ */
+export interface Figure {
+  id: string;
+  kitId: string;
+  sourceId: string;
+  page: number;
+  title: string;
+  /** JPEG bytes. Missing on a device the image hasn't reached yet. */
+  image?: ArrayBuffer;
+  width: number;
+  height: number;
+  /** Each label's text and box as fractions of the image: [x, y, width, height]. */
+  labels: { text: string; box: [number, number, number, number] }[];
+  createdAt: number;
+}
+
+/** A page of a PDF (or a photo) as read, kept on this device to show next to questions and to find diagrams in. */
+export interface PageImage {
+  id: string; // "<sourceId>:<page>"
+  kitId: string;
+  sourceId: string;
+  page: number;
+  /** JPEG bytes (not a Blob: Safari's IndexedDB can refuse Blobs). */
+  image: ArrayBuffer;
+  width: number;
+  height: number;
+  /** Already looked at for diagram cards. */
+  scanned?: boolean;
+}
+
+/** A compound name looked up on PubChem or OPSIN (chem.ts), cached on this device. No `smiles`: no such compound. */
+export interface MoleculeLookup {
+  id: string; // the name, lower case
+  smiles?: string;
+  source?: "pubchem" | "opsin";
+  at: number;
+}
+
+export type QuestionType = "mcq" | "tf" | "short" | "numeric";
+
+/** A calculation's answer, worked out by the app from the question's expression (calc.ts), not taken from Gemini. */
+export interface NumericAnswer {
+  value: number;
+  unit: string;
+  expression: string;
+}
 
 export interface Question {
   id: string;
@@ -99,6 +156,8 @@ export interface Question {
   answer: string;
   explanation: string;
   hint: string;
+  /** Numeric questions (and calculated multiple choice): the checked answer. */
+  numeric?: NumericAnswer;
   origin: "smart" | "test";
   createdAt: number;
   /** When it was last asked in Smart Study. */
@@ -107,6 +166,8 @@ export interface Question {
   asks?: number;
   /** Score on the last ask, 0..1. Missed questions come back after a day. */
   lastScore?: number;
+  /** Why the student reported it as wrong. A flagged question is never asked again and its answer didn't count. */
+  flagged?: string;
 }
 
 export interface Attempt {
@@ -136,14 +197,14 @@ export interface TestRun {
   finishedAt?: number;
 }
 
-export type OutputType = "guide" | "summary" | "podcast";
+export type OutputType = "guide" | "summary" | "podcast" | "reactions";
 
 export interface Output {
   id: string;
   kitId: string;
   type: OutputType;
   title: string;
-  /** Markdown for guide/summary, JSON-encoded script for podcast. */
+  /** Markdown for guide/summary, JSON for a podcast script or a reaction sheet. */
   content: string;
   /**
    * WAV bytes. Stored as an ArrayBuffer: Safari's IndexedDB can refuse Blobs ("Error preparing
@@ -214,6 +275,9 @@ export const db = new Dexie("mnemo") as Dexie & {
   scores: EntityTable<GameScore, "id">;
   tombstones: EntityTable<Tombstone, "id">;
   sourceFiles: EntityTable<SourceFile, "id">;
+  figures: EntityTable<Figure, "id">;
+  pages: EntityTable<PageImage, "id">;
+  molecules: EntityTable<MoleculeLookup, "id">;
 };
 
 db.version(1).stores({
@@ -260,6 +324,13 @@ db.version(4).stores({
   sourceFiles: "id, kitId",
 });
 
+// v5: diagram cards (figures, synced), page images and compound lookups (this device only).
+db.version(5).stores({
+  figures: "id, kitId",
+  pages: "id, kitId, sourceId",
+  molecules: "id",
+});
+
 export const newId = () => crypto.randomUUID();
 
 /** Podcast audio as a playable/downloadable Blob, whichever form it was stored in. */
@@ -277,24 +348,34 @@ export const KIT_TABLES = [
   "outputs",
   "chats",
   "scores",
+  "figures",
 ] as const;
 
 /** Tables that sync across devices (everything except tombstones themselves). */
 export const SYNC_TABLES = ["folders", "kits", ...KIT_TABLES, "usage"] as const;
 export type SyncTable = (typeof SYNC_TABLES)[number];
 
-/** Drops kept files whose source is gone (removed here or on another device) or has been read since. */
+/**
+ * Drops kept files whose source is gone (removed here or on another device) or has been read
+ * since, and page images whose source is gone.
+ */
 export async function pruneKeptFiles(): Promise<void> {
   const ids = await db.sourceFiles.toCollection().primaryKeys();
   const sources = await db.sources.bulkGet(ids);
   const stale = ids.filter((_, i) => !sources[i] || sources[i].status === "ready");
   if (stale.length) await db.sourceFiles.bulkDelete(stale);
+  const pageIds = (await db.pages.toCollection().primaryKeys()) as string[];
+  const sourceIds = [...new Set(pageIds.map((id) => id.slice(0, id.lastIndexOf(":"))))];
+  const present = await db.sources.bulkGet(sourceIds);
+  const gone = new Set(sourceIds.filter((_, i) => !present[i]));
+  if (gone.size) await db.pages.bulkDelete(pageIds.filter((id) => gone.has(id.slice(0, id.lastIndexOf(":")))));
 }
 
 export async function deleteKit(kitId: string): Promise<void> {
-  await db.transaction("rw", [db.kits, db.sourceFiles, ...KIT_TABLES.map((t) => db[t])], async () => {
+  await db.transaction("rw", [db.kits, db.sourceFiles, db.pages, ...KIT_TABLES.map((t) => db[t])], async () => {
     for (const t of KIT_TABLES) await db[t].where("kitId").equals(kitId).delete();
     await db.sourceFiles.where("kitId").equals(kitId).delete();
+    await db.pages.where("kitId").equals(kitId).delete();
     await db.kits.delete(kitId);
   });
 }

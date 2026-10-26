@@ -1,6 +1,6 @@
 import { blobToBase64 } from "./extract";
 import { base64ToBytes } from "./gemini";
-import { audioBlob, db, KIT_TABLES, type Output } from "./db";
+import { audioBlob, db, KIT_TABLES, type Figure, type Output } from "./db";
 import { reviveCard } from "./srs";
 
 const TABLES = ["folders", "kits", ...KIT_TABLES, "usage"] as const;
@@ -25,6 +25,15 @@ export async function exportAll(includeAudio: boolean): Promise<Blob> {
         }),
       );
     }
+    // Diagram images are small and the cards are useless without them, so they're always included.
+    if (name === "figures") {
+      rows = await Promise.all(
+        (rows as Figure[]).map(async (f) => {
+          const { image, ...rest } = f;
+          return image ? { ...rest, imageBase64: await blobToBase64(new Blob([image])) } : rest;
+        }),
+      );
+    }
     tables[name] = rows;
   }
   const backup: Backup = { app: "mnemo", version: 1, exportedAt: new Date().toISOString(), tables };
@@ -46,6 +55,11 @@ export async function importAll(file: File): Promise<number> {
           const bytes = base64ToBytes(r.audioBase64);
           r.audio = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
           delete r.audioBase64;
+        }
+        if (typeof r.imageBase64 === "string") {
+          const bytes = base64ToBytes(r.imageBase64);
+          r.image = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+          delete r.imageBase64;
         }
         return r;
       });

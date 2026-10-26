@@ -1,4 +1,5 @@
 import { useLiveQuery } from "dexie-react-hooks";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router";
 import { db, type Concept, type Kit } from "./db";
 
@@ -38,4 +39,16 @@ export function shuffle<T>(items: T[]): T[] {
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
+}
+
+/** An object URL for image bytes, revoked when the bytes change or the component goes away. */
+export function useImageUrl(bytes: ArrayBuffer | undefined, type = "image/jpeg"): string | undefined {
+  const [url, setUrl] = useState<string>();
+  useEffect(() => {
+    if (!bytes) return setUrl(undefined);
+    const u = URL.createObjectURL(new Blob([bytes], { type }));
+    setUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [bytes, type]);
+  return url;
 }

@@ -32,6 +32,8 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         // The sync API must always hit the network.
         navigateFallbackDenylist: [/^\/api\//],
+        // RDKit (7 MB) isn't precached: it loads the first time a structure is drawn, then works offline.
+        runtimeCaching: [{ urlPattern: /\.wasm$/, handler: "CacheFirst", options: { cacheName: "wasm", expiration: { maxEntries: 4 } } }],
       },
     }),
   ],

@@ -8,6 +8,7 @@ import { generateText } from "../lib/gemini";
 import { download } from "../lib/hooks";
 import { findModel, formatUsd, MODELS, ratesAt } from "../lib/pricing";
 import { TTS_VOICES, updateSettings, useSettings, type Settings as S, type ThinkingLevel } from "../lib/settings";
+import { CHALLENGES, type Challenge } from "../lib/smart";
 import { monthStart, projectMonth, summarize, taskLabel } from "../lib/usage";
 import { Stat } from "./Progress";
 import { SyncCard } from "../components/SyncCard";
@@ -22,6 +23,18 @@ export default function Settings() {
       <SyncCard />
       <Usage />
       <Models s={s} />
+      <Card className="space-y-3 p-5">
+        <h2 className="font-semibold">Smart Study difficulty</h2>
+        <Segmented
+          value={s.challenge}
+          onChange={(challenge) => updateSettings({ challenge })}
+          options={(Object.keys(CHALLENGES) as Challenge[]).map((value) => ({ value, label: CHALLENGES[value].label }))}
+        />
+        <p className="text-xs text-muted">
+          {CHALLENGES[s.challenge].blurb} Each concept moves up as you get its questions right and down when you miss, so the level settles where you get
+          about that share right; a run of misses eases everything off for a while. Also in the Steer menu during a session.
+        </p>
+      </Card>
       <Card className="space-y-4 p-5">
         <h2 className="font-semibold">Appearance</h2>
         <Segmented

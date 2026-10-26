@@ -17,6 +17,7 @@ const SmartStudy = lazy(() => import("./pages/SmartStudy"));
 const Flashcards = lazy(() => import("./pages/Flashcards"));
 const PracticeTest = lazy(() => import("./pages/PracticeTest"));
 const DocPage = lazy(() => import("./pages/DocPage"));
+const Reactions = lazy(() => import("./pages/Reactions"));
 const Podcast = lazy(() => import("./pages/Podcast"));
 const Games = lazy(() => import("./pages/Games"));
 const Tutor = lazy(() => import("./pages/Tutor"));
@@ -67,6 +68,7 @@ createRoot(document.getElementById("root")!).render(
           <Route path="/kit/:kitId/test" element={<PracticeTest />} />
           <Route path="/kit/:kitId/guide" element={<DocPage type="guide" />} />
           <Route path="/kit/:kitId/summary" element={<DocPage type="summary" />} />
+          <Route path="/kit/:kitId/reactions" element={<Reactions />} />
           <Route path="/kit/:kitId/podcast" element={<Podcast />} />
           <Route path="/kit/:kitId/games" element={<Games />} />
           <Route path="/kit/:kitId/tutor" element={<Tutor />} />

@@ -116,7 +116,7 @@ export function Badge({ children, tone = "neutral", className }: { children: Rea
   return <span className={clsx("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium", tones[tone], className)}>{children}</span>;
 }
 
-export function Modal({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: ReactNode }) {
+export function Modal({ open, onClose, title, wide, children }: { open: boolean; onClose: () => void; title: string; wide?: boolean; children: ReactNode }) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -126,7 +126,10 @@ export function Modal({ open, onClose, title, children }: { open: boolean; onClo
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
-      <div className="surface animate-pop max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl p-5 sm:rounded-[var(--radius-card)]" onClick={(e) => e.stopPropagation()}>
+      <div
+        className={clsx("surface animate-pop max-h-[90dvh] w-full overflow-y-auto rounded-t-3xl p-5 sm:rounded-[var(--radius-card)]", wide ? "max-w-4xl" : "max-w-lg")}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold">{title}</h2>
           <button onClick={onClose} className="rounded-lg p-1 hover:bg-[var(--surface-2)]" aria-label="Close">

@@ -8,7 +8,7 @@ import { Button, Card, ErrorBox, Field, inputClass, PageHeader } from "../compon
 import { db } from "../lib/db";
 import { runJob } from "../lib/jobs";
 import { useSettings } from "../lib/settings";
-import { addSources, createKit, firstFlashcards, type NewSource } from "../lib/study";
+import { addSources, createKit, type NewSource } from "../lib/study";
 import type { PdfMode } from "../lib/ingest";
 
 export default function NewKit() {
@@ -33,8 +33,8 @@ export default function NewKit() {
     const sources = items.map((i) => (i.type === "file" ? { ...i, pdfMode } : i));
     runJob(`kit:${kitId}`, async ({ signal, report }) => {
       const onStatus = (name: string, status: string) => report(`${status}${name === "kit" ? "" : `: ${name}`}`);
+      // Also writes the first flashcards.
       await addSources(kitId, sources, onStatus, signal);
-      await firstFlashcards(kitId, onStatus, signal);
     });
     navigate(`/kit/${kitId}`);
   };

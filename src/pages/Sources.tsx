@@ -44,6 +44,7 @@ export default function Sources() {
     if (!confirm("Remove this source? Existing flashcards and questions are kept.")) return;
     await db.sources.delete(id);
     await db.sourceFiles.delete(id);
+    await db.pages.where("sourceId").equals(id).delete();
   };
 
   if (kit === null) return <MissingKit />;
